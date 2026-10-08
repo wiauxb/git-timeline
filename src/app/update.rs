@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use super::action::{Action, Effect, OpResult};
 use super::search::{self, Scope};
+use super::viewport::{self, scroll_to_cursor, set_top};
 use super::state::{diffable, AppState, Displayed, Focus, JobKey, Level, Overlay, StatusMessage, TextInput, ViewMode};
 use crate::model::line_map::map_line;
 use crate::model::{
@@ -48,19 +49,22 @@ pub fn update(s: &mut AppState, a: Action) -> Vec<Effect> {
         Action::CursorDown(n) => move_cursor(s, n as isize),
         Action::CursorUp(n) => move_cursor(s, -(n as isize)),
         Action::WheelFile(d) => move_cursor(s, d),
-        Action::HalfPageDown => move_cursor(s, (s.file_rows() / 2) as isize),
-        Action::HalfPageUp => move_cursor(s, -((s.file_rows() / 2) as isize)),
-        Action::PageDown => move_cursor(s, s.file_rows() as isize),
-        Action::PageUp => move_cursor(s, -(s.file_rows() as isize)),
+        Action::HalfPageDown => page(s, s.file_rows() / 2, true),
+        Action::HalfPageUp => page(s, s.file_rows() / 2, false),
+        Action::PageDown => page(s, s.file_rows(), true),
+        Action::PageUp => page(s, s.file_rows(), false),
         Action::Top => move_cursor(s, isize::MIN / 2),
         Action::Bottom => move_cursor(s, isize::MAX / 2),
         Action::ClickFileRow(row) => {
             s.focus = Focus::File;
-            let target = s.file.top + row;
+            let d = s.displayed();
+            let target = viewport::row_at_screen(s, &d, row).unwrap_or(usize::MAX / 2);
             move_cursor(s, target as isize - s.file.cursor as isize);
         }
-        Action::ScrollLeft => s.file.hscroll = s.file.hscroll.saturating_sub(8),
-        Action::ScrollRight => s.file.hscroll += 8,
+        // everything is visible when wrapped
+        Action::ScrollLeft if !s.file.wrap => s.file.hscroll = s.file.hscroll.saturating_sub(8),
+        Action::ScrollRight if !s.file.wrap => s.file.hscroll += 8,
+        Action::ScrollLeft | Action::ScrollRight => {}
         Action::NextHunk => jump_hunk(s, true),
         Action::PrevHunk => jump_hunk(s, false),
         Action::BlameJump => blame_jump(s),
@@ -77,6 +81,7 @@ pub fn update(s: &mut AppState, a: Action) -> Vec<Effect> {
         Action::SetView(v) => set_view(s, v),
         Action::ToggleMark => toggle_mark(s),
         Action::ToggleLineNumbers => s.file.show_line_numbers = !s.file.show_line_numbers,
+        Action::ToggleWrap => toggle_wrap(s),
 
         Action::StartSearch => search::start(s),
         Action::SearchNext => search::next(s, true),
@@ -107,6 +112,9 @@ pub fn update(s: &mut AppState, a: Action) -> Vec<Effect> {
         Action::JobDone(r) => fx.extend(job_done(s, r)),
         Action::OpDone(r) => fx.extend(op_done(s, r)),
         Action::Layout(l) => {
+            if l != s.layout {
+                s.file.top_skip = 0; // segment boundaries move with the width
+            }
             s.layout = l;
             clamp_cursor(s);
             ensure_list_visible(s);
@@ -194,8 +202,9 @@ fn capture_anchor(s: &AppState) -> Option<LineAnchor> {
         // still travelling: keep anchoring from the last version actually shown
         return Some(a.clone());
     }
-    let (content, line) = s.displayed().anchor_at(s.file.cursor)?;
-    Some(LineAnchor { content, line, viewport_offset: s.file.cursor.saturating_sub(s.file.top) })
+    let d = s.displayed();
+    let (content, line) = d.anchor_at(s.file.cursor)?;
+    Some(LineAnchor { content, line, viewport_offset: viewport::offset_of(s, &d) })
 }
 
 fn ensure_list_visible(s: &mut AppState) {
@@ -239,13 +248,22 @@ fn move_cursor(s: &mut AppState, d: isize) {
     scroll_to_cursor(s);
 }
 
-pub(super) fn scroll_to_cursor(s: &mut AppState) {
-    let rows = s.file_rows();
-    if s.file.cursor < s.file.top {
-        s.file.top = s.file.cursor;
-    } else if s.file.cursor >= s.file.top + rows {
-        s.file.top = s.file.cursor + 1 - rows;
+/// Page / half page: move by as many logical rows as cover `screen` screen rows.
+fn page(s: &mut AppState, screen: usize, forward: bool) {
+    let d = s.displayed();
+    let n = viewport::rows_for_screen(s, &d, s.file.cursor, screen, forward) as isize;
+    move_cursor(s, if forward { n } else { -n });
+}
+
+fn toggle_wrap(s: &mut AppState) {
+    s.file.wrap = !s.file.wrap;
+    s.file.top_skip = 0;
+    if s.file.wrap {
+        s.file.hscroll = 0;
     }
+    clamp_cursor(s);
+    scroll_to_cursor(s);
+    info(s, Level::Info, if s.file.wrap { "wrap on" } else { "wrap off" });
 }
 
 fn clamp_cursor(s: &mut AppState) {
@@ -254,7 +272,7 @@ fn clamp_cursor(s: &mut AppState) {
     }
     if let Some(n) = s.displayed().row_count() {
         s.file.cursor = s.file.cursor.min(n.saturating_sub(1));
-        s.file.top = s.file.top.min(n.saturating_sub(1));
+        set_top(s, s.file.top.min(n.saturating_sub(1)));
         scroll_to_cursor(s);
     }
 }
@@ -278,7 +296,7 @@ fn jump_hunk(s: &mut AppState, forward: bool) {
             s.file.pending_anchor = None;
             s.file.cursor = t;
             // show the hunk from its header
-            s.file.top = t.saturating_sub(1);
+            set_top(s, t.saturating_sub(1));
             scroll_to_cursor(s);
         }
         None => info(s, Level::Info, if forward { "last hunk" } else { "first hunk" }),
@@ -712,7 +730,7 @@ fn resolve_anchor(s: &mut AppState) -> Vec<Effect> {
             None => {
                 // not text here: keep the anchor for the next text version
                 s.file.cursor = 0;
-                s.file.top = 0;
+                set_top(s, 0);
                 return Vec::new();
             }
         },
@@ -737,14 +755,16 @@ fn resolve_anchor(s: &mut AppState) -> Vec<Effect> {
     let rows = disp.row_count().unwrap_or(0);
     s.file.pending_anchor = None;
     s.file.cursor = row.min(rows.saturating_sub(1));
-    s.file.top = s.file.cursor.saturating_sub(anchor.viewport_offset);
+    s.file.top_skip = 0;
+    let mut top = viewport::top_for_offset(s, &disp, s.file.cursor, anchor.viewport_offset);
     // don't leave empty rows at the bottom when the content could fill them
-    s.file.top = s.file.top.min(rows.saturating_sub(s.file_rows()));
+    top = top.min(viewport::max_top(s, &disp));
     if let Displayed::Diff { rows, .. } = &disp {
-        if s.file.top > 0 && matches!(rows.get(s.file.top - 1), Some(DiffRow::HunkHeader(_))) {
-            s.file.top -= 1;
+        if top > 0 && matches!(rows.get(top - 1), Some(DiffRow::HunkHeader(_))) {
+            top -= 1;
         }
     }
+    s.file.top = top;
     scroll_to_cursor(s);
     Vec::new()
 }

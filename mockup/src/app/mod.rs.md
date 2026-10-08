@@ -8,6 +8,7 @@ The application loop: events → actions → reducer → effects → redraw. Own
 
 ```rust
 pub mod action; pub mod cache; pub mod keymap; pub mod search; pub mod state; pub mod update;
+pub mod viewport;
 
 const TICK: Duration = Duration::from_millis(120);
 

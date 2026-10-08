@@ -16,8 +16,11 @@ impl ViewMode { pub fn is_diff(self) -> bool; }
 pub struct FileViewState {
     pub cursor: usize,             // row index in the rendered rows of the current view
     pub top: usize,                // first visible row
+    pub top_skip: usize,           // wrap: screen rows of `top` hidden above the body
+                                   // (only set by viewport::reveal; 0 otherwise)
     pub hscroll: usize,            // columns
     pub show_line_numbers: bool,   // initial: true
+    pub wrap: bool,                // soft wrap at word boundaries; initial: false
     pub pending_anchor: Option<LineAnchor>,
 }
 
@@ -101,6 +104,10 @@ impl Displayed {
     pub fn anchor_at(&self, row) -> Option<(ContentKey, usize)>;  // Diff: new-side line
     pub fn row_of_line(&self, line) -> usize;                     // Diff: nearest new-side row
     pub fn anchor_key(&self) -> Option<&ContentKey>;              // Text key / Diff new_key
+    /// Text of a row: Text ⇒ the line; Diff ⇒ the line of the row's side (old for
+    /// removed rows, new otherwise); hunk headers / non-text ⇒ None. Shared by the
+    /// search (hits, reveal) and the viewport (wrap heights). Moved from `search.rs`.
+    pub fn row_text(&self, row: usize) -> Option<Cow<'_, str>>;
 }
 ```
 
@@ -145,4 +152,4 @@ parent's short oid, root commit → `∅`.
 ## Invariants
 * `selected_idx` points at `selected` whenever the timeline is non-empty (`reselect`).
 * A `mark` whose revision vanished after a *complete* reload is cleared with a warning.
-* Not implemented: soft wrap, vim count prefix.
+* Not implemented: vim count prefix; moving by screen row inside a wrapped line (`gj`).

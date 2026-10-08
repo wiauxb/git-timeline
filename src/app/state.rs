@@ -1,5 +1,6 @@
 //! `AppState`: the single source of truth. `ui/` reads it, only `update.rs` mutates it.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,7 +14,7 @@ use crate::cli::{InitialView, UiOptions};
 use crate::git::repo::RepoContext;
 use crate::highlight::{HighlightOutcome, HighlightedText};
 use crate::model::{
-    diff, BlameData, BlameKey, BlobSource, ContentKey, DiffKey, DiffRow, FileContent, FileDiff,
+    diff, BlameData, BlameKey, BlobSource, ContentKey, DiffKey, DiffLine, DiffRow, FileContent, FileDiff,
     FileMode, LineAnchor, Oid, RepoPath, RevisionId, Timeline, TimelineEntry,
 };
 use crate::ui::LayoutInfo;
@@ -44,8 +45,12 @@ pub struct FileViewState {
     /// Row index in the rendered rows of the current view.
     pub cursor: usize,
     pub top: usize,
+    /// Wrap: screen rows of `top` hidden above the body (set by `viewport::reveal` only).
+    pub top_skip: usize,
     pub hscroll: usize,
     pub show_line_numbers: bool,
+    /// Soft wrap at word boundaries.
+    pub wrap: bool,
     pub pending_anchor: Option<LineAnchor>,
 }
 
@@ -177,6 +182,25 @@ impl Displayed {
         match self {
             Displayed::Diff { rows, .. } => diff::row_of_source_line(rows, line),
             _ => line,
+        }
+    }
+
+    /// Text of a row: the line (Text) or the line of the row's side (Diff); hunk headers
+    /// and non-text displays have none. Shared by the search and the wrap heights.
+    pub fn row_text(&self, row: usize) -> Option<Cow<'_, str>> {
+        match self {
+            Displayed::Text { content, .. } => {
+                let t = content.as_text()?;
+                (row < t.line_count()).then(|| t.line_str(row))
+            }
+            Displayed::Diff { rows, old, new, .. } => match rows.get(row)? {
+                DiffRow::HunkHeader(_) => None,
+                DiffRow::Line(DiffLine::Removed { old: l }) => Some(old.as_text()?.line_str(*l)),
+                DiffRow::Line(DiffLine::Context { new: l, .. } | DiffLine::Added { new: l }) => {
+                    Some(new.as_text()?.line_str(*l))
+                }
+            },
+            _ => None,
         }
     }
 

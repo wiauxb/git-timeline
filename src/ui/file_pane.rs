@@ -145,6 +145,9 @@ fn header(s: &AppState, d: &Displayed) -> Line<'static> {
             let text = content.as_text().expect("text");
             parts.push(path.display().into_owned());
             parts.push(format!("{} lines", text.line_count()));
+            if s.file.wrap {
+                parts.push("wrap".into());
+            }
             match (hl, hl_note) {
                 (Some(h), _) => parts.push(h.syntax_name.clone()),
                 (None, Some(n)) => parts.push((*n).to_string()),
@@ -164,6 +167,9 @@ fn header(s: &AppState, d: &Displayed) -> Line<'static> {
             parts.push(format!("{old_label}  →  {new_label}"));
             parts.push(format!("+{} −{}", diff.added, diff.removed));
             parts.push(format!("{} hunks", diff.hunks.len()));
+            if s.file.wrap {
+                parts.push("wrap".into());
+            }
         }
         Displayed::DiffSummary { old_label, new_label, .. } => parts.push(format!("{old_label}  →  {new_label}")),
         Displayed::NotText { path, .. } => parts.push(path.display().into_owned()),

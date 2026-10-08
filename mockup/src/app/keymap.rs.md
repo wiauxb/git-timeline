@@ -74,6 +74,7 @@ fn map_mouse(s: &AppState, m: MouseEvent) -> Option<Action>;
 | `g`/`Home`, `G`/`End` | Top / Bottom |
 | `h`/`←`, `l`/`→` | ScrollLeft / ScrollRight |
 | `#` | ToggleLineNumbers |
+| `w` | ToggleWrap |
 | `Esc` | Escape (clear the file search, else FocusTimeline) |
 | `}` / `{` (diff views) | NextHunk / PrevHunk |
 | `Enter` (blame view) | BlameJump |

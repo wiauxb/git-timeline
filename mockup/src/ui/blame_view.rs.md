@@ -26,6 +26,8 @@ pub fn gutter_cols(s: &AppState, text: &TextContent) -> usize;
   `%Y-%m-%d` (10). Printed on group-start lines **and on the top visible row**; other rows
   show a dim `   ┆` padded to 28.
 * Null oid ⇒ dim `(not committed yet)` padded to 28.
+* **Wrap on**: continuation rows get a blank 28-col gutter, ` │`, then the number column
+  blank with a dim `↪` (or `↪` in place of the single space when numbers are off).
 * Then ` │`, then line numbers `{:>digits} │ ` (when shown) or a single space, then the
   text via `styled_line`, with search matches (`content_view::search_marks`) on the text only.
 * Hash color = age bucket `round((newest − t) / (newest − oldest) × 5)` into

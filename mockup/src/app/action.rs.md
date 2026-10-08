@@ -24,7 +24,7 @@ pub enum Action {
 
     // layout / view
     ToggleFocus, FocusFile, FocusTimeline, ToggleZoom,
-    SetView(ViewMode), ToggleMark, ToggleLineNumbers,
+    SetView(ViewMode), ToggleMark, ToggleLineNumbers, ToggleWrap,
 
     // search (app/search.rs), scope = focused pane
     StartSearch, SearchNext, SearchPrev,

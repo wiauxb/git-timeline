@@ -25,9 +25,9 @@ fn prompt(f: &mut Frame, area: Rect, s: &AppState, p: &SearchPrompt);
 3. ` │ `, then either the status message (`status_info` / `status_warn` /
    `status_error` by level) or the hints (dim), fitted to the remaining width.
 4. Right-aligned position `N/M ` (dim). When the focused pane has a search, it is
-   preceded by `/<query> k/M · ` (`<query>` fitted to 20 cols): `k` = 1-based number of
-   the hit on the current row, or `-` when the current row is not a hit; `M` = hit count
-   (`no match` when 0).
+   preceded by `/<query> k/M · ` (`<query>` fitted to 20 cols): `k` = 1-based
+   `search::current_hit`, or `-`; `M` = hit count — matching rows in the timeline,
+   **matches** in the file (`no match` when 0).
 
 ## Search prompt (while `Overlay::Search` is open)
 The whole bar is replaced, vim-style:
@@ -41,7 +41,7 @@ empty.
 
 ## Hints
 * Timeline focus: `/ search · m mark · y copy · e export · R restore · d details · ? help`
-* File focus, Content: `/ search · [ ] older/newer · # numbers · z zoom · ? help`
+* File focus, Content: `/ search · [ ] older/newer · # numbers · w wrap · z zoom · ? help`
 * File focus, diff views: `{ } hunk · / search · [ ] older/newer · z zoom · ? help`
 * File focus, Blame: `⏎ jump to commit · [ ] older/newer · # numbers · ? help`
 

@@ -17,7 +17,7 @@ pub fn select(s: &mut AppState, idx: usize);
 // private: select_delta, capture_anchor, ensure_list_visible, reselect, move_cursor,
 // scroll_to_cursor, clamp_cursor, jump_hunk, blame_jump, set_view, toggle_mark,
 // show_details, selected_bytes, start_export, start_restore, resolve_dest,
-// overlay_action, edit_input, op_done, reload, job_done, want_content, want_highlight, want_diff,
+// overlay_action, edit_input, page, toggle_wrap, op_done, reload, job_done, want_content, want_highlight, want_diff,
 // request_missing, prefetch, resolve_anchor, touch_displayed
 ```
 
@@ -51,15 +51,16 @@ Holding `j` therefore only requests what is selected at the end of each batch.
   `pending_anchor = anchor`, `needs_requests`, `ensure_list_visible`.
 * `capture_anchor`: reuses an existing `pending_anchor` (fast travel keeps anchoring from
   the last version actually shown); otherwise `displayed().anchor_at(cursor)` →
-  `LineAnchor{content, line, viewport_offset: cursor - top}`.
+  `LineAnchor{content, line, viewport_offset: viewport::offset_of}` (screen rows above
+  the cursor, so it also holds with wrapped lines).
 * `set_view` captures an anchor the same way (switching views keeps the line).
 * `resolve_anchor`: if the new display is `Waiting` → wait. Not text (no anchor key) →
   cursor/top = 0, **keep** the anchor for the next text version. Same key → same line.
   Otherwise use cached `FileDiff(anchor.content → new key)` + `line_map::map_line`; if
   missing, request `ComputeDiff` and wait; if impossible (old content evicted / not text)
-  → keep the raw line number. Then cursor = `row_of_line`, `top = cursor - offset`,
-  clamped so the content fills the screen; in diff views, if the row above `top` is a
-  hunk header it is included.
+  → keep the raw line number. Then cursor = `row_of_line`, `top =
+  viewport::top_for_offset(cursor, offset)`, clamped to `viewport::max_top` so the content
+  fills the screen; in diff views, if the row above `top` is a hunk header it is included.
 * Any manual cursor move clears `pending_anchor`; `clamp_cursor` is skipped while an
   anchor is pending.
 * `reselect` after timeline changes: re-find `selected` by `RevisionId`; if gone, select
@@ -71,6 +72,15 @@ Holding `j` therefore only requests what is selected at the end of each batch.
   `Reload` and `LocalState` call `search::reset_timeline_hits`. Text editing
   (`InputChar` … `InputEnd`) is shared by the export and search prompts (`edit_input`,
   returns whether the text changed ⇒ `search::edited`).
+* **Viewport**: all screen-row math (`scroll_to_cursor`, page sizes, bottom clamp,
+  anchor offset, click → row) goes through `app/viewport.rs`. `PageDown/Up` and
+  `HalfPageDown/Up` move by `viewport::rows_for_screen(file_rows())` (or half) logical
+  rows (`page`). A `Layout` that differs from the current one resets `top_skip`
+  (segment boundaries move with the width). `ClickFileRow(y)` → `viewport::row_at_screen(y)`.
+* **Soft wrap** `w` (`ToggleWrap`, `toggle_wrap`): flips `file.wrap`, `top_skip = 0`;
+  turning it on sets `hscroll = 0`; then `clamp_cursor` + `scroll_to_cursor`. While wrapped, `ScrollLeft/Right` do nothing, and the
+  search's horizontal reveal is skipped. `j`/`k` still move by logical line; the cursor
+  highlights every screen row of its line. Info "wrap on" / "wrap off".
 * **Hunks** `}`/`{`: jump to next/previous `HunkHeader` row (top = row - 1); at the end →
   Info "last hunk"/"first hunk" (no wrap to another revision).
 * **BlameJump** (Blame view only): null oid → "line not committed yet"; commit in timeline →

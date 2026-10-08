@@ -35,8 +35,8 @@ the right border over the body rows when `row_count > body.height`, positioned a
 ## Header (first body row, dim, parts joined by ` · `)
 | Displayed | Parts |
 |---|---|
-| `Text` | path at revision · `N lines` · syntax name or highlight note (`plain text`, `no highlighting (too large)`, …) · `CRLF`? · `non-UTF-8`? · `⏎ jump to commit` (blame view) |
-| `Diff` | `a/<old path> @ <old label>  →  b/<new path> @ <new label>` · `+A −R` · `N hunks` |
+| `Text` | path at revision · `N lines` · `wrap`? · syntax name or highlight note (`plain text`, `no highlighting (too large)`, …) · `CRLF`? · `non-UTF-8`? · `⏎ jump to commit` (blame view) |
+| `Diff` | `a/<old path> @ <old label>  →  b/<new path> @ <new label>` · `+A −R` · `N hunks` · `wrap`? |
 | `DiffSummary` | the same `old → new` labels |
 | `NotText` / others | the path |
 | any non-diff view of a renamed entry | `renamed from <old> (<similarity>%)` |

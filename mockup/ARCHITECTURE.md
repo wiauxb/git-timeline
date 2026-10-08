@@ -34,7 +34,8 @@ revision, plus a few alternative views.
 | Staleness | No per-job tickets: every result is cached, and `update::after_batch` re-derives what the current view still needs once per batch of events (gives debouncing of held keys for free). Only the timeline stream has a generation counter (reload) |
 | Cross-thread errors | Carried as `String` in `JobResult` |
 | Startup | Local state (`git status`) read **synchronously** before the TUI so the `Working tree` row is on top and selected before commits stream in |
-| Search | `/` searches the **focused pane**: the timeline (hash prefix + subject) or the file view (displayed lines, every view). Regex, smart case, incremental. It jumps and highlights, never filters. `n`/`N` next/previous match, wrapping. One search per pane, kept across revision changes |
+| Soft wrap | `w` toggles it (off by default), file pane only, all views. Word boundaries, `↪` on continuation rows, no horizontal scroll while on. Cursor and anchoring stay on **logical** lines; screen-row math lives in `app/viewport.rs` |
+| Search | `/` searches the **focused pane**: the timeline (hash prefix + subject) or the file view (displayed lines, every view). Regex, smart case, incremental. It jumps and highlights, never filters. `n`/`N` next/previous match, wrapping: by row in the timeline, **by match** in the file (several matches on one line are visited in turn, scrolling inside a tall wrapped line). One search per pane, kept across revision changes |
 | Minimum git | **2.36** (`cat-file --batch-command`), checked at startup |
 
 ## 3. File tree
@@ -74,6 +75,7 @@ git-timeline/
 │   │   ├── state.rs              `AppState` + `Displayed` (what the file pane shows)
 │   │   ├── action.rs             `Action` (intents), `Effect` (side effects), `OpResult`
 │   │   ├── update.rs             reducer + `after_batch` (requests, re-anchoring, prefetch)
+│   │   ├── viewport.rs           screen-row geometry of the file pane (soft wrap)
 │   │   ├── keymap.rs             key/mouse event → `Action`; `BINDINGS` table for help
 │   │   ├── search.rs             `/` search: per-pane query, prompt flow, hit lists, n/N
 │   │   └── cache.rs              LRU caches for content / highlight / diff / blame / details
@@ -164,6 +166,7 @@ Rules:
 | `}` / `{` | next / previous hunk (diff views) |
 | `Enter` (blame view) | jump to the revision that last touched the line |
 | `#` | toggle line numbers |
+| `w` | toggle soft wrap (file pane) |
 | `z` | zoom the file pane |
 | `d` | commit details popup |
 | `y` | copy full hash |
@@ -215,7 +218,6 @@ with `GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 LC_ALL=C`, pager env removed.
 ## 9. Out of scope for now
 
 * Side-by-side diff, word-level diff highlighting.
-* Soft wrap (`w`): horizontal scrolling only.
 * Filtering the commit list from inside the UI (search jumps, never hides rows);
   searching full commit messages or authors.
 * Directories (only single files).

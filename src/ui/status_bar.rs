@@ -7,7 +7,7 @@ use ratatui::Frame;
 
 use super::fit;
 use super::theme::theme;
-use crate::app::search::{current_row, scope_of, SearchPrompt};
+use crate::app::search::{current_hit, scope_of, SearchPrompt};
 use crate::app::state::{AppState, Focus, Level, Overlay, ViewMode};
 
 fn badge(s: &AppState) -> Span<'static> {
@@ -72,7 +72,7 @@ fn hints(s: &AppState) -> String {
         Focus::File => match s.view {
             ViewMode::Blame => "⏎ jump to commit · [ ] older/newer · # numbers · ? help".into(),
             ViewMode::DiffPrev | ViewMode::DiffMarked => "{ } hunk · / search · [ ] older/newer · z zoom · ? help".into(),
-            ViewMode::Content => "/ search · [ ] older/newer · # numbers · z zoom · ? help".into(),
+            ViewMode::Content => "/ search · [ ] older/newer · # numbers · w wrap · z zoom · ? help".into(),
         },
     }
 }
@@ -88,12 +88,11 @@ fn position(s: &AppState) -> String {
 fn search_info(s: &AppState) -> String {
     let scope = scope_of(s.focus);
     let Some(q) = s.search.query(scope) else { return String::new() };
-    let hits = s.search.hits(scope);
-    let count = match hits.len() {
+    let count = match s.search.hit_count(scope) {
         0 => "no match".to_string(),
-        m => match hits.binary_search(&current_row(s, scope)) {
-            Ok(k) => format!("{}/{m}", k + 1),
-            Err(_) => format!("-/{m}"),
+        m => match current_hit(s, scope) {
+            Some(k) => format!("{}/{m}", k + 1),
+            None => format!("-/{m}"),
         },
     };
     format!("/{} {count} · ", fit(q.pattern(), 20))
@@ -105,7 +104,7 @@ fn prompt(f: &mut Frame, area: Rect, s: &AppState, p: &SearchPrompt) {
     let (right, rstyle) = match &p.error {
         Some(e) => (format!("invalid regex: {e}"), t.status_error),
         None if p.input.value.is_empty() => (String::new(), t.dim),
-        None => match s.search.hits(p.scope).len() {
+        None => match s.search.hit_count(p.scope) {
             0 => ("no match".to_string(), t.dim),
             1 => ("1 match".to_string(), t.dim),
             n => (format!("{n} matches"), t.dim),

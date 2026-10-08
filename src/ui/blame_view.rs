@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use super::content_view::{cursor_style, digits, search_marks, styled_line};
+use super::content_view::{body_lines, digits, search_marks, styled_line, styled_wrapped};
 use super::fit;
 use super::theme::theme;
 use crate::app::state::AppState;
@@ -52,9 +52,7 @@ pub fn render(
 
     let nw = if s.file.show_line_numbers { digits(text.line_count()) + 3 } else { 0 };
     let text_w = (area.width as usize).saturating_sub(gutter_cols(s, text));
-    let lines: Vec<Line> = (s.file.top..text.line_count())
-        .take(area.height as usize)
-        .map(|i| {
+    let lines = body_lines(s, area.height as usize, text.line_count(), |i| {
             let mut spans = Vec::new();
             match blame.and_then(|b| b.lines.get(i).map(|l| (b, l))) {
                 Some((b, l)) if l.group_start || i == s.file.top => {
@@ -87,11 +85,29 @@ pub fn render(
             } else {
                 spans.push(Span::raw(" "));
             }
-            let marks = search_marks(s, text, i);
-            spans.extend(styled_line(text, hl, i, Style::default(), &marks, s.file.hscroll, text_w, s.opts.tab_width));
-            cursor_style(Line::from(spans), s, i)
-        })
-        .collect();
+            let marks = search_marks(s, i);
+            if !s.file.wrap {
+                spans.extend(styled_line(text, hl, i, Style::default(), &marks, s.file.hscroll, text_w, s.opts.tab_width));
+                return vec![Line::from(spans)];
+            }
+            let segs = styled_wrapped(text, hl, i, Style::default(), &marks, text_w, s.opts.tab_width);
+            let mut first = Some(spans);
+            segs.into_iter()
+                .map(|text_spans| {
+                    let mut spans = first.take().unwrap_or_else(|| {
+                        let mut g = vec![Span::raw(" ".repeat(GUTTER)), Span::styled(" │", t.dim)];
+                        g.push(if nw > 0 {
+                            Span::styled(format!("{:>w$} │ ", "↪", w = nw - 3), t.line_number)
+                        } else {
+                            Span::styled("↪", t.dim)
+                        });
+                        g
+                    });
+                    spans.extend(text_spans);
+                    Line::from(spans)
+                })
+                .collect()
+        });
     f.render_widget(Paragraph::new(lines), area);
 }
 

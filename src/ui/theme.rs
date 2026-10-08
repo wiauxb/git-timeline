@@ -41,6 +41,8 @@ pub struct Theme {
     pub link: Style,
     /// Search hits, both panes.
     pub search_match: Style,
+    /// The match `n` / `N` stopped at.
+    pub search_current: Style,
     pub mono: bool,
 }
 
@@ -100,6 +102,7 @@ fn colored() -> Theme {
         danger: s().fg(Color::Red).add_modifier(Modifier::BOLD),
         link: s().add_modifier(Modifier::UNDERLINED),
         search_match: s().fg(Color::Black).bg(Color::Yellow),
+        search_current: s().fg(Color::Black).bg(Color::LightRed).add_modifier(Modifier::BOLD),
         mono: false,
     }
 }
@@ -145,6 +148,7 @@ fn monochrome() -> Theme {
         danger: bold,
         link: s().add_modifier(Modifier::UNDERLINED),
         search_match: rev,
+        search_current: rev.add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
         mono: true,
     }
 }

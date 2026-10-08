@@ -8,14 +8,16 @@ use common::*;
 use git_timeline::app::action::{Action, Effect};
 use git_timeline::app::state::{AppState, Displayed, Focus, Overlay, ViewMode};
 use git_timeline::app::update::{after_batch, update};
+use git_timeline::app::viewport;
 use git_timeline::cli::{InitialView, UiOptions};
 use git_timeline::git::blob::BlobReader;
 use git_timeline::git::repo::RepoContext;
 use git_timeline::highlight::Highlighter;
 use git_timeline::model::{BlobSource, DiffLine, DiffRow, FileContent, FileMode, RevisionId};
-use git_timeline::ui::{self, LayoutInfo};
+use git_timeline::ui::{self, content_view, LayoutInfo};
 use git_timeline::worker::{run_inline, Job, JobResult};
 use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
@@ -23,6 +25,8 @@ struct Harness {
     s: AppState,
     ctx: Arc<RepoContext>,
     effects: Vec<Effect>,
+    /// Terminal size used by `render`.
+    size: (u16, u16),
 }
 
 impl Harness {
@@ -37,7 +41,7 @@ impl Harness {
             file_body_rows: 20,
             file_body_cols: 78,
         };
-        let mut h = Harness { s, ctx, effects: Vec::new() };
+        let mut h = Harness { s, ctx, effects: Vec::new(), size: (120, 30) };
         h.feed(Job::LoadLocalState);
         h.feed(Job::LoadTimeline { gen: 0 });
         h.settle();
@@ -78,13 +82,26 @@ impl Harness {
         self.settle();
     }
 
-    fn render(&self) -> String {
-        let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    fn buffer(&self) -> Buffer {
+        let mut term = Terminal::new(TestBackend::new(self.size.0, self.size.1)).unwrap();
         term.draw(|f| {
             ui::draw(f, &self.s);
         })
         .unwrap();
-        let buf = term.backend().buffer().clone();
+        term.backend().buffer().clone()
+    }
+
+    /// Draw at `w`×`h` and feed the layout back, so wrap widths match what is rendered.
+    fn resize(&mut self, w: u16, h: u16) {
+        self.size = (w, h);
+        let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+        let mut layout = self.s.layout;
+        term.draw(|f| layout = ui::draw(f, &self.s)).unwrap();
+        self.act(Action::Layout(layout));
+    }
+
+    fn render(&self) -> String {
+        let buf = self.buffer();
         (0..buf.area.height)
             .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>())
             .collect::<Vec<_>>()
@@ -345,6 +362,10 @@ impl Harness {
         }
     }
 
+    fn hit_rows(&self) -> Vec<usize> {
+        self.s.search.file_hits.matches.iter().map(|m| m.row).collect()
+    }
+
     fn status(&self) -> String {
         self.s.status.as_ref().map(|m| m.text.clone()).unwrap_or_default()
     }
@@ -411,7 +432,7 @@ fn search_file_all_views() {
     let d = h.s.displayed();
     let Displayed::Diff { rows, .. } = &d else { panic!("diff expected") };
     assert!(matches!(rows[h.s.file.cursor], DiffRow::Line(DiffLine::Added { new: 20 })));
-    for &r in &h.s.search.file_hits.rows {
+    for r in h.hit_rows() {
         assert!(!matches!(rows[r], DiffRow::HunkHeader(_)), "hunk headers are not searched");
     }
     drop(d);
@@ -419,7 +440,7 @@ fn search_file_all_views() {
     h.type_str("line 20");
     h.act(Action::Confirm);
     let Displayed::Diff { rows, .. } = h.s.displayed() else { panic!() };
-    let removed = h.s.search.file_hits.rows.iter().any(|&r| matches!(rows[r], DiffRow::Line(DiffLine::Removed { .. })));
+    let removed = h.hit_rows().into_iter().any(|r| matches!(rows[r], DiffRow::Line(DiffLine::Removed { .. })));
     assert!(removed, "removed rows are searched on the old side");
 
     // blame: the gutter (hashes, author names) is not searched
@@ -427,18 +448,18 @@ fn search_file_all_views() {
     h.act(Action::StartSearch);
     h.type_str("Alice");
     h.act(Action::Confirm);
-    assert!(h.s.search.file_hits.rows.is_empty(), "{:?}", h.s.search.file_hits.rows);
+    assert!(h.hit_rows().is_empty(), "{:?}", h.hit_rows());
     h.act(Action::StartSearch);
     h.type_str("needle");
     h.act(Action::Confirm);
-    assert_eq!(h.s.search.file_hits.rows, vec![20]);
+    assert_eq!(h.hit_rows(), vec![20]);
     h.act(Action::CursorDown(3));
 
     // older revision: query kept, hits recomputed, cursor anchored (not moved to a match)
     h.act(Action::SelectNext);
     assert_eq!(h.s.selected_idx, 1);
     assert!(h.s.search.file.is_some());
-    assert!(h.s.search.file_hits.rows.is_empty());
+    assert!(h.hit_rows().is_empty());
     assert_eq!(h.s.file.cursor, 23);
 
     h.act(Action::Escape);
@@ -533,4 +554,179 @@ fn hunk_keys_moved() {
     assert!(matches!(map(&h.s, key('/')), Some(Action::StartSearch)));
     h.act(Action::SearchNext);
     assert_eq!(h.status(), "no search — press / to search");
+}
+
+// ───────────────────────────── soft wrap ─────────────────────────────
+
+/// 200 chars: 50 four-char words `<p>NN `.
+fn long_line(p: char) -> String {
+    (0..50).map(|i| format!("{p}{i:02} ")).collect()
+}
+
+/// Screen rows of the body between the row showing `a` and the one showing `b`.
+fn rows_between(screen: &str, a: &str, b: &str) -> usize {
+    let ia = screen.lines().position(|l| l.contains(a)).unwrap_or_else(|| panic!("{a} not in\n{screen}"));
+    let ib = screen.lines().position(|l| l.contains(b)).unwrap_or_else(|| panic!("{b} not in\n{screen}"));
+    ib - ia
+}
+
+#[test]
+fn wrap_renders_continuations() {
+    let f = Fixture::new();
+    f.edit("a.txt", "short\n", "base");
+    f.edit("a.txt", &format!("{}\nshort\n", long_line('w')), "add a long line");
+    let mut h = Harness::new(&f, &["a.txt"]);
+    h.resize(120, 30);
+    h.act(Action::FocusFile);
+
+    let screen = h.render();
+    assert!(!screen.contains('↪'));
+    assert_eq!(rows_between(&screen, "1 │ w00", "2 │ short"), 1, "wrap off: one row, clipped");
+    assert!(!screen.contains("w49"));
+
+    h.act(Action::ToggleWrap);
+    let screen = h.render();
+    assert_eq!(rows_between(&screen, "1 │ w00", "2 │ short"), 3, "{screen}");
+    assert_eq!(screen.matches("↪ │").count(), 2);
+    assert!(screen.contains("w49"));
+    // breaks at spaces: no word is cut
+    for i in 0..50 {
+        assert!(screen.contains(&format!("w{i:02}")), "w{i:02} cut:\n{screen}");
+    }
+    assert!(screen.contains("wrap"), "header shows wrap");
+
+    // diff: the + row keeps its tint on continuation rows
+    h.act(Action::SetView(ViewMode::DiffPrev));
+    let screen = h.render();
+    let y = screen.lines().position(|l| l.contains("+ w00")).unwrap();
+    let cont = screen.lines().nth(y + 1).unwrap();
+    assert!(cont.contains('↪'), "{screen}");
+    let buf = h.buffer();
+    let x = cont.chars().position(|c| c == '↪').unwrap() as u16 + 6;
+    let added = git_timeline::ui::theme::theme().diff_added_bg;
+    assert_eq!(buf[(x, y as u16 + 1)].style().bg, added.bg.or(Some(ratatui::style::Color::Reset)));
+}
+
+#[test]
+fn wrap_viewport_math() {
+    let f = Fixture::new();
+    let text: String = (0..30).map(|i| long_line(char::from(b'a' + (i % 26) as u8)) + "\n").collect();
+    f.edit("a.txt", &text, "long lines");
+    let mut h = Harness::new(&f, &["a.txt"]);
+    h.resize(120, 30);
+    h.act(Action::FocusFile);
+    h.act(Action::ToggleWrap);
+    let body = h.s.file_rows();
+    let d = h.s.displayed();
+    assert_eq!(viewport::row_height(&h.s, &d, 0), 3);
+    drop(d);
+    let per_screen = body / 3;
+
+    h.act(Action::CursorDown(1));
+    assert_eq!(h.s.file.cursor, 1, "j moves one logical line");
+    h.act(Action::CursorDown(10));
+    assert_eq!(h.s.file.cursor, 11);
+    assert_eq!(h.s.file.top, 11 + 1 - per_screen, "whole cursor line visible");
+
+    h.act(Action::PageDown);
+    assert_eq!(h.s.file.cursor, 11 + per_screen, "a page covers one screen of screen rows");
+    let top = h.s.file.top;
+
+    // screen row 4 = second segment of the row below the top
+    h.act(Action::ClickFileRow(4));
+    assert_eq!(h.s.file.cursor, top + 1);
+
+    h.act(Action::ScrollRight);
+    assert_eq!(h.s.file.hscroll, 0, "no horizontal scroll while wrapped");
+    h.act(Action::ToggleWrap);
+    h.act(Action::ScrollRight);
+    assert_eq!(h.s.file.hscroll, 8);
+}
+
+#[test]
+fn wrap_anchor_keeps_screen_offset() {
+    let f = Fixture::new();
+    let long: Vec<String> = (0..30).map(|i| format!("L{i:02} {}", long_line('x'))).collect();
+    f.edit("a.txt", &(long.join("\n") + "\n"), "all long");
+    // lines 8..15 become short at HEAD; L15 stays
+    let mut head = long.clone();
+    for (i, l) in head.iter_mut().enumerate().take(15).skip(8) {
+        *l = format!("short {i}");
+    }
+    f.edit("a.txt", &(head.join("\n") + "\n"), "shorten 8..15");
+    let mut h = Harness::new(&f, &["a.txt"]);
+    h.resize(120, 30);
+    h.act(Action::FocusFile);
+    h.act(Action::ToggleWrap);
+
+    // HEAD: cursor on L15 with three short lines (3 screen rows) above it
+    h.s.file.cursor = 15;
+    h.s.file.top = 12;
+    let d = h.s.displayed();
+    assert_eq!(viewport::offset_of(&h.s, &d), 3);
+    drop(d);
+
+    h.act(Action::SelectNext); // all lines long: one line above = 3 screen rows
+    assert_eq!(h.s.selected_idx, 1);
+    assert_eq!(h.s.file.cursor, 15);
+    assert_eq!(h.s.file.top, 14, "same screen offset, not the same number of lines");
+    let d = h.s.displayed();
+    assert_eq!(viewport::offset_of(&h.s, &d), 3);
+}
+
+#[test]
+fn search_steps_through_one_line() {
+    let f = Fixture::new();
+    let filler = "abcd ".repeat(40);
+    let line = format!("{filler}needle {filler}needle {filler}needle");
+    f.edit("a.txt", &format!("{line}\nnext\n"), "one long line");
+    let mut h = Harness::new(&f, &["a.txt"]);
+    h.resize(120, 30);
+    h.act(Action::FocusFile);
+
+    // wrap off: each n scrolls horizontally to the next match on the same line
+    h.act(Action::StartSearch);
+    h.type_str("needle");
+    h.act(Action::Confirm);
+    let starts: Vec<usize> = line.match_indices("needle").map(|(i, _)| i).collect();
+    for (k, &start) in starts.iter().enumerate() {
+        if k > 0 {
+            h.act(Action::SearchNext);
+        }
+        assert_eq!(h.s.file.cursor, 0);
+        assert_eq!(h.s.file.hscroll, start - 8, "match {k}");
+        let screen = h.render();
+        assert!(screen.lines().last().unwrap().contains(&format!("/needle {}/3", k + 1)), "{screen}");
+    }
+    h.act(Action::SearchNext);
+    assert_eq!(h.status(), "search wrapped to top");
+    assert_eq!(h.s.file.hscroll, starts[0] - 8);
+
+    // wrap on, small body: each n scrolls inside the tall line to show its match
+    h.resize(120, 10);
+    h.act(Action::ToggleWrap);
+    let rows = h.s.file_rows();
+    let mut skipped = false;
+    for k in 1..=3 {
+        h.act(Action::SearchNext);
+        let m = k % 3;
+        assert_eq!(h.s.search.file_hits.current, Some(m));
+        let d = h.s.displayed();
+        let cols = viewport::text_cols(&h.s, &d);
+        drop(d);
+        let seg = content_view::wrap_breaks(&line, cols, 4).partition_point(|&b| b <= starts[m]);
+        let skip = h.s.file.top_skip;
+        assert!((skip..skip + rows).contains(&seg), "match {m}: segment {seg}, skip {skip}");
+        skipped |= skip > 0;
+        // the current match is drawn with search_current
+        let cur = git_timeline::ui::theme::theme().search_current;
+        let buf = h.buffer();
+        let found = (0..buf.area.height).any(|y| (0..buf.area.width).any(|x| buf[(x, y)].style().add_modifier == cur.add_modifier && buf[(x, y)].style().bg == cur.bg && buf[(x, y)].symbol() == "n"));
+        assert!(found, "current match not highlighted:\n{}", h.render());
+    }
+    assert!(skipped, "a tall line was scrolled inside");
+
+    h.act(Action::CursorDown(1));
+    assert_eq!(h.s.file.top_skip, 0);
+    assert!(h.render().lines().last().unwrap().contains("/needle -/3"));
 }

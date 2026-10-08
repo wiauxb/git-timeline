@@ -6,6 +6,7 @@ pub mod keymap;
 pub mod search;
 pub mod state;
 pub mod update;
+pub mod viewport;
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -1,13 +1,14 @@
 //! `/` search of the focused pane: timeline (hash prefix + subject) or file view (displayed
 //! lines). Jumps and highlights, never filters. One query per pane.
 
-use std::borrow::Cow;
+use std::ops::Range;
 use std::sync::Arc;
 
 use super::state::{AppState, Displayed, Focus, Level, Overlay, TextInput};
-use super::update::{info, scroll_to_cursor, select};
-use crate::model::{ContentKey, DiffKey, DiffLine, DiffRow, Query, RevisionId, TimelineEntry};
-use crate::ui::{content_view::col_of_byte, file_pane::gutter_cols};
+use super::update::{info, select};
+use super::viewport;
+use crate::model::{ContentKey, DiffKey, Query, RevisionId, TimelineEntry};
+use crate::ui::content_view::{col_of_byte, wrap_breaks};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Scope {
@@ -30,11 +31,20 @@ pub struct TimelineHits {
     pub rows: Vec<usize>,
 }
 
-/// Matching rows of the current file view, ascending, computed on `key`.
+/// Every match of the current file view in reading order, computed on `key`.
+/// `current` = the match `n` / `N` last landed on.
 #[derive(Default, Debug)]
 pub struct FileHits {
     pub key: Option<FileHitsKey>,
-    pub rows: Vec<usize>,
+    pub matches: Vec<FileMatch>,
+    pub current: Option<usize>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct FileMatch {
+    pub row: usize,
+    /// Byte range in the row's text (`Displayed::row_text`).
+    pub bytes: Range<usize>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -66,26 +76,33 @@ impl SearchState {
         }
     }
 
-    pub fn hits(&self, scope: Scope) -> &[usize] {
+    /// Matching rows in the timeline, matches in the file.
+    pub fn hit_count(&self, scope: Scope) -> usize {
         match scope {
-            Scope::Timeline => &self.timeline_hits.rows,
-            Scope::File => &self.file_hits.rows,
+            Scope::Timeline => self.timeline_hits.rows.len(),
+            Scope::File => self.file_hits.matches.len(),
         }
     }
+}
+
+/// 0-based index of the current hit, for the `k/M` counter.
+pub fn current_hit(s: &AppState, scope: Scope) -> Option<usize> {
+    match scope {
+        Scope::Timeline => s.search.timeline_hits.rows.binary_search(&s.selected_idx).ok(),
+        Scope::File => current_match(s).and(s.search.file_hits.current),
+    }
+}
+
+/// The current match, if the cursor is still on its row.
+pub fn current_match(s: &AppState) -> Option<&FileMatch> {
+    let h = &s.search.file_hits;
+    h.current.and_then(|i| h.matches.get(i)).filter(|m| m.row == s.file.cursor)
 }
 
 pub fn scope_of(f: Focus) -> Scope {
     match f {
         Focus::Timeline => Scope::Timeline,
         Focus::File => Scope::File,
-    }
-}
-
-/// The row a scope's navigation starts from.
-pub fn current_row(s: &AppState, scope: Scope) -> usize {
-    match scope {
-        Scope::Timeline => s.selected_idx,
-        Scope::File => s.file.cursor,
     }
 }
 
@@ -140,9 +157,18 @@ pub fn edited(s: &mut AppState) {
             set_query(s, scope, Some(Arc::new(q)));
             refresh(s);
             let from = origin_row(s, &origin);
-            let hits = s.search.hits(scope);
-            match hits.iter().copied().find(|&h| h >= from).or(hits.first().copied()) {
-                Some(row) => jump(s, scope, row),
+            let target = match scope {
+                Scope::Timeline => {
+                    let rows = &s.search.timeline_hits.rows;
+                    rows.iter().copied().find(|&h| h >= from).or(rows.first().copied())
+                }
+                Scope::File => {
+                    let all = &s.search.file_hits.matches;
+                    (!all.is_empty()).then(|| all.iter().position(|m| m.row >= from).unwrap_or(0))
+                }
+            };
+            match target {
+                Some(t) => jump(s, scope, t),
                 None => restore_origin(s, &origin),
             }
         }
@@ -164,7 +190,7 @@ pub fn confirm(s: &mut AppState) {
         return;
     }
     refresh(s);
-    if s.search.hits(scope).is_empty() {
+    if s.search.hit_count(scope) == 0 {
         let q = s.search.query(scope).map(|q| q.pattern().to_string()).unwrap_or_default();
         info(s, Level::Warn, format!("pattern not found: {q}"));
     }
@@ -194,7 +220,7 @@ fn restore_origin(s: &mut AppState, origin: &Origin) {
         Origin::File { cursor, top, hscroll } => {
             s.file.pending_anchor = None;
             s.file.cursor = cursor;
-            s.file.top = top;
+            viewport::set_top(s, top);
             s.file.hscroll = hscroll;
         }
     }
@@ -208,17 +234,40 @@ pub fn next(s: &mut AppState, forward: bool) {
         return;
     };
     refresh(s);
-    let hits = s.search.hits(scope);
-    if hits.is_empty() {
+    let n = s.search.hit_count(scope);
+    if n == 0 {
         info(s, Level::Warn, format!("pattern not found: {}", q.pattern()));
         return;
     }
-    let cur = current_row(s, scope);
-    let (target, wrapped) = if forward {
-        hits.iter().copied().find(|&h| h > cur).map(|h| (h, false)).unwrap_or((hits[0], true))
-    } else {
-        hits.iter().rev().copied().find(|&h| h < cur).map(|h| (h, false)).unwrap_or((hits[hits.len() - 1], true))
+    let found = match scope {
+        // timeline: by row
+        Scope::Timeline => {
+            let (rows, cur) = (&s.search.timeline_hits.rows, s.selected_idx);
+            if forward {
+                rows.iter().copied().find(|&h| h > cur)
+            } else {
+                rows.iter().rev().copied().find(|&h| h < cur)
+            }
+        }
+        // file: by match; without a current match the cursor stands before its row's start
+        Scope::File => {
+            let all = &s.search.file_hits.matches;
+            let cur = s.file.cursor;
+            match (current_match(s).and(s.search.file_hits.current), forward) {
+                (Some(i), true) => (i + 1 < n).then_some(i + 1),
+                (Some(i), false) => i.checked_sub(1),
+                (None, true) => all.iter().position(|m| m.row >= cur),
+                (None, false) => all.iter().rposition(|m| m.row < cur),
+            }
+        }
     };
+    let wrapped = found.is_none();
+    let target = found.unwrap_or_else(|| match (scope, forward) {
+        (Scope::Timeline, true) => s.search.timeline_hits.rows[0],
+        (Scope::Timeline, false) => s.search.timeline_hits.rows[n - 1],
+        (Scope::File, true) => 0,
+        (Scope::File, false) => n - 1,
+    });
     jump(s, scope, target);
     if wrapped {
         info(s, Level::Info, if forward { "search wrapped to top" } else { "search wrapped to bottom" });
@@ -235,27 +284,33 @@ pub fn clear(s: &mut AppState, scope: Scope) -> bool {
     true
 }
 
-fn jump(s: &mut AppState, scope: Scope, row: usize) {
+/// Timeline: `target` is a row; file: an index into the match list.
+fn jump(s: &mut AppState, scope: Scope, target: usize) {
     match scope {
-        Scope::Timeline => select(s, row),
-        Scope::File => jump_file(s, row),
+        Scope::Timeline => select(s, target),
+        Scope::File => jump_file(s, target),
     }
 }
 
-fn jump_file(s: &mut AppState, row: usize) {
+fn jump_file(s: &mut AppState, m: usize) {
+    let Some(FileMatch { row, bytes }) = s.search.file_hits.matches.get(m).cloned() else { return };
+    s.search.file_hits.current = Some(m);
     s.file.pending_anchor = None;
     s.file.cursor = row;
-    scroll_to_cursor(s);
-    // horizontal reveal of the first match on the row
-    let Some(q) = s.search.file.clone() else { return };
     let d = s.displayed();
-    let Some(text) = row_text(&d, row) else { return };
-    let Some(m) = q.find_iter(&text).next() else { return };
+    let Some(text) = d.row_text(row) else { return viewport::scroll_to_cursor(s) };
     let tab = s.opts.tab_width;
-    let (start, end) = (col_of_byte(&text, m.start, tab), col_of_byte(&text, m.end, tab));
-    let cols = s.file_cols().saturating_sub(gutter_cols(s, &d)).max(1);
-    if start < s.file.hscroll || end > s.file.hscroll + cols {
-        s.file.hscroll = start.saturating_sub(8);
+    let cols = viewport::text_cols(s, &d);
+    if s.file.wrap {
+        // the wrapped screen row holding the match start
+        let segment = wrap_breaks(&text, cols, tab).partition_point(|&b| b <= bytes.start);
+        viewport::reveal(s, &d, row, segment);
+    } else {
+        viewport::scroll_to_cursor(s);
+        let (start, end) = (col_of_byte(&text, bytes.start, tab), col_of_byte(&text, bytes.end, tab));
+        if start < s.file.hscroll || end > s.file.hscroll + cols {
+            s.file.hscroll = start.saturating_sub(8);
+        }
     }
 }
 
@@ -291,10 +346,13 @@ pub fn refresh(s: &mut AppState) {
     if key.is_none() {
         s.search.file_hits = FileHits::default();
     } else if key != s.search.file_hits.key {
-        let rows = (0..d.row_count().unwrap_or(0))
-            .filter(|&r| row_text(&d, r).is_some_and(|t| q.is_match(&t)))
-            .collect();
-        s.search.file_hits = FileHits { key, rows };
+        let mut matches = Vec::new();
+        for row in 0..d.row_count().unwrap_or(0) {
+            if let Some(t) = d.row_text(row) {
+                matches.extend(q.find_iter(&t).map(|bytes| FileMatch { row, bytes }));
+            }
+        }
+        s.search.file_hits = FileHits { key, matches, current: None };
     }
 }
 
@@ -302,24 +360,6 @@ pub fn entry_matches(q: &Query, e: &TimelineEntry) -> bool {
     match (e.oid(), &e.meta) {
         (Some(oid), Some(meta)) => q.hash_prefix(oid.as_str()).is_some() || q.is_match(&meta.subject),
         _ => q.is_match(&e.label()),
-    }
-}
-
-/// Searchable text of a file-view row (hunk headers and non-text: none).
-pub fn row_text(d: &Displayed, row: usize) -> Option<Cow<'_, str>> {
-    match d {
-        Displayed::Text { content, .. } => {
-            let t = content.as_text()?;
-            (row < t.line_count()).then(|| t.line_str(row))
-        }
-        Displayed::Diff { rows, old, new, .. } => match rows.get(row)? {
-            DiffRow::HunkHeader(_) => None,
-            DiffRow::Line(DiffLine::Removed { old: l }) => Some(old.as_text()?.line_str(*l)),
-            DiffRow::Line(DiffLine::Context { new: l, .. } | DiffLine::Added { new: l }) => {
-                Some(new.as_text()?.line_str(*l))
-            }
-        },
-        _ => None,
     }
 }
 

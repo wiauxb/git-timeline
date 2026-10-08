@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use super::content_view::{cursor_style, digits, search_marks, styled_line};
+use super::content_view::{body_lines, digits, search_marks, styled_line, styled_wrapped};
 use super::theme::theme;
 use crate::app::state::AppState;
 use crate::highlight::HighlightedText;
@@ -45,20 +45,14 @@ pub fn render(f: &mut Frame, area: Rect, s: &AppState, d: &DiffInputs) {
         _ => " ".repeat(nw),
     };
 
-    let lines: Vec<Line> = d
-        .rows
-        .iter()
-        .enumerate()
-        .skip(s.file.top)
-        .take(area.height as usize)
-        .map(|(row, r)| {
-            let line = match *r {
+    let lines = body_lines(s, area.height as usize, d.rows.len(), |row| {
+            match d.rows[row] {
                 DiffRow::HunkHeader(h) => {
                     let h = &d.diff.hunks[h];
-                    Line::from(Span::styled(
+                    vec![Line::from(Span::styled(
                         format!("@@ -{},{} +{},{} @@", h.old_start + 1, h.old_len, h.new_start + 1, h.new_len),
                         t.diff_hunk_header,
-                    ))
+                    ))]
                 }
                 DiffRow::Line(l) => {
                     let (o, n, marker, mstyle, base, side, idx) = match l {
@@ -66,26 +60,51 @@ pub fn render(f: &mut Frame, area: Rect, s: &AppState, d: &DiffInputs) {
                         DiffLine::Removed { old } => (Some(old), None, "-", t.diff_removed, t.diff_removed_bg, d.old.zip(Some(d.old_hl)), old),
                         DiffLine::Added { new } => (None, Some(new), "+", t.diff_added, t.diff_added_bg, d.new.zip(Some(d.new_hl)), new),
                     };
-                    let mut spans = Vec::new();
-                    if nw > 0 {
-                        spans.push(Span::styled(format!("{} {} │", num(o), num(n)), t.line_number));
-                    }
-                    spans.push(Span::styled(format!("{marker} "), mstyle.patch(base)));
-                    if let Some((text, hl)) = side {
-                        // without colors, unhighlighted +/- lines take the marker's style
-                        let base = if hl.is_none() && marker != " " { base.patch(mstyle) } else { base };
-                        let marks = search_marks(s, text, idx);
-                        spans.extend(styled_line(text, hl, idx, base, &marks, s.file.hscroll, text_w, s.opts.tab_width));
-                        if is_last_without_newline(text, idx) {
-                            spans.push(Span::styled(" ⏎̸ no newline at end of file", t.dim));
+                    let Some((text, hl)) = side else {
+                        let mut spans = Vec::new();
+                        if nw > 0 {
+                            spans.push(Span::styled(format!("{} {} │", num(o), num(n)), t.line_number));
                         }
-                    }
-                    Line::from(spans)
+                        spans.push(Span::styled(format!("{marker} "), mstyle.patch(base)));
+                        return vec![Line::from(spans)];
+                    };
+                    // without colors, unhighlighted +/- lines take the marker's style
+                    let tbase = if hl.is_none() && marker != " " { base.patch(mstyle) } else { base };
+                    let marks = search_marks(s, row);
+                    let segs = if s.file.wrap {
+                        styled_wrapped(text, hl, idx, tbase, &marks, text_w, s.opts.tab_width)
+                    } else {
+                        vec![styled_line(text, hl, idx, tbase, &marks, s.file.hscroll, text_w, s.opts.tab_width)]
+                    };
+                    let last = segs.len() - 1;
+                    segs.into_iter()
+                        .enumerate()
+                        .map(|(seg, text_spans)| {
+                            let mut spans = Vec::new();
+                            match (nw > 0, seg) {
+                                (true, 0) => spans.push(Span::styled(format!("{} {} │", num(o), num(n)), t.line_number)),
+                                (true, _) => spans.push(Span::styled(
+                                    format!("{} {:>nw$} │", " ".repeat(nw), "↪"),
+                                    t.line_number,
+                                )),
+                                _ => {}
+                            }
+                            let m = match (seg, nw > 0) {
+                                (0, _) => format!("{marker} "),
+                                (_, true) => "  ".into(),
+                                (_, false) => "↪ ".into(),
+                            };
+                            spans.push(Span::styled(m, mstyle.patch(base)));
+                            spans.extend(text_spans);
+                            if seg == last && is_last_without_newline(text, idx) {
+                                spans.push(Span::styled(" ⏎̸ no newline at end of file", t.dim));
+                            }
+                            Line::from(spans)
+                        })
+                        .collect()
                 }
-            };
-            cursor_style(line, s, row)
-        })
-        .collect();
+            }
+        });
     f.render_widget(Paragraph::new(lines), area);
 }
 

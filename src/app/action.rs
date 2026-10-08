@@ -47,6 +47,7 @@ pub enum Action {
     SetView(ViewMode),
     ToggleMark,
     ToggleLineNumbers,
+    ToggleWrap,
 
     // search (app/search.rs), scope = focused pane
     StartSearch,
