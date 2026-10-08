@@ -1,5 +1,10 @@
 # git-timeline
 
+> [!WARNING]
+> This is a **vibecoded** project, and it has quite a **low priority** in my schedule: expect rough edges.
+> Nonetheless, any [issue](https://github.com/wiauxb/git-timeline/issues) or contribution is welcome!
+> I'll do my best to respond within a reasonable time frame ;)
+
 Browse every version of a file through its git history, in the terminal.
 
 ```

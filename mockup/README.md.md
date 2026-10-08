@@ -5,6 +5,11 @@ End-user documentation. Developer docs live in doc comments and in `mockup/`.
 
 ## Sections
 
+0. **Warning banner** (GitHub `> [!WARNING]` alert, first thing after the title, written
+   in the maintainer's first person): the project is vibecoded and has a low priority in
+   their schedule, expect rough edges; issues (linked to the GitHub issues page) and
+   contributions are nonetheless welcome, with a promise to respond within a reasonable
+   time frame.
 1. **Pitch** + an ASCII screenshot of the two-pane UI.
 2. **Install** — `cargo install --path .`; `~/.cargo/bin` on `PATH` makes `git timeline`
    work; git ≥ 2.36.
