@@ -31,6 +31,7 @@ lru               = "0.18"   # bounded caches
 bstr              = "1"      # byte-string paths
 chrono            = { version = "0.4", default-features = false, features = ["std", "clock"] }
 unicode-width     = "0.2"
+regex             = "1"      # `/` search (already in the tree via syntect)
 thiserror         = "2"
 anyhow            = "1"      # only at the lib::run / main boundary
 base64            = "0.22"   # OSC 52 payload

@@ -8,6 +8,7 @@ use std::time::Instant;
 use chrono::{DateTime, Local};
 
 use super::cache::{absent, Caches};
+use super::search::{SearchPrompt, SearchState};
 use crate::cli::{InitialView, UiOptions};
 use crate::git::repo::RepoContext;
 use crate::highlight::{HighlightOutcome, HighlightedText};
@@ -91,6 +92,8 @@ pub enum Overlay {
     ExportPrompt { rev: RevisionId, input: TextInput, error: Option<String> },
     ConfirmOverwrite { rev: RevisionId, dest: PathBuf },
     Error { message: String },
+    /// `/` prompt; drawn in the status bar, not as a popup.
+    Search(SearchPrompt),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -139,6 +142,7 @@ pub enum Displayed {
         new: Arc<FileContent>,
         old_hl: Option<Arc<HighlightedText>>,
         new_hl: Option<Arc<HighlightedText>>,
+        old_key: ContentKey,
         new_key: ContentKey,
         old_label: String,
         new_label: String,
@@ -204,6 +208,7 @@ pub struct AppState {
 
     pub view: ViewMode,
     pub file: FileViewState,
+    pub search: SearchState,
 
     pub in_flight: HashSet<JobKey>,
     pub cache: Caches,
@@ -242,6 +247,7 @@ impl AppState {
             zoomed: false,
             view,
             file: FileViewState { show_line_numbers: true, ..Default::default() },
+            search: SearchState::default(),
             in_flight: HashSet::new(),
             cache: Caches::default(),
             needs_requests: true,
@@ -353,6 +359,7 @@ impl AppState {
                     new: new.1,
                     old_hl,
                     new_hl,
+                    old_key: old.0,
                     new_key: new.0,
                     old_label,
                     new_label,

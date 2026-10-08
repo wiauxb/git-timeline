@@ -48,6 +48,13 @@ pub enum Action {
     ToggleMark,
     ToggleLineNumbers,
 
+    // search (app/search.rs), scope = focused pane
+    StartSearch,
+    SearchNext,
+    SearchPrev,
+    /// File pane: clear the search, else focus the timeline. Timeline: clear the search.
+    Escape,
+
     // overlays
     ShowHelp,
     ShowDetails,

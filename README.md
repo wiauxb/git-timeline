@@ -77,7 +77,9 @@ the newest commit. They are hidden when a revision range is given.
 | `[` / `]` | older / newer revision, from either pane |
 | `1` `2` `3` `4` | content / diff / compare / blame |
 | `m` | mark the compare base |
-| `n` / `N` | next / previous hunk |
+| `/` | search the focused pane (see below) |
+| `n` / `N` | next / previous search match |
+| `}` / `{` | next / previous hunk (diff views) |
 | `g` / `G`, `Ctrl-D` / `Ctrl-U`, PgUp/PgDn | jump / page |
 | `h` / `l` (file pane) | horizontal scroll |
 | `#` | toggle line numbers |
@@ -91,6 +93,15 @@ the newest commit. They are hidden when a revision range is given.
 | `q` | quit |
 
 The mouse works too: wheel to scroll, click to select.
+
+**Search**: `/` searches the focused pane. In the timeline it matches commit hashes (by
+prefix) and subjects; in the file pane it matches the displayed lines, in every view
+(the blame gutter and diff `@@` headers are not searched). The query is a regex with
+smart case (case-insensitive unless it contains an uppercase letter), matches are
+highlighted and the selection jumps to them as you type. `Enter` keeps the search,
+`Esc` in the prompt cancels it, `n` / `N` jump to the next / previous match (wrapping),
+and `Esc` clears it. Each pane keeps its own search, and the file search stays active
+when you change revision.
 
 **Restore** only rewrites the working-tree file at its current path (with the right
 executable bit). It never touches the index, HEAD or any ref. Review the result with

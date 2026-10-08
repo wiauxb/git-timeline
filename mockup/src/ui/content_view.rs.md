@@ -16,7 +16,19 @@ pub fn cursor_style<'a>(line: Line<'a>, s: &AppState, row: usize) -> Line<'a>;
 pub fn digits(n: usize) -> usize;   // decimal width of max(n, 1)
 
 pub fn styled_line(text: &TextContent, hl: Option<&HighlightedText>, line: usize,
-                   base: Style, hscroll: usize, width: usize, tab_width: u8) -> Vec<Span<'static>>;
+                   base: Style, marks: &[Range<usize>],
+                   hscroll: usize, width: usize, tab_width: u8) -> Vec<Span<'static>>;
+
+/// Display column of byte `byte` in `line`, with the same rules as `styled_line`
+/// (tabs, `^X`, wide chars). Used for the search's horizontal reveal.
+pub fn col_of_byte(line: &str, byte: usize, tab_width: u8) -> usize;
+
+/// Byte ranges of the file search's matches on `line` of `text` (empty without a file
+/// search). Takes the line's own text so renderers don't re-resolve `displayed()`.
+pub fn search_marks(s: &AppState, text: &TextContent, line: usize) -> Vec<Range<usize>>;
+
+/// Columns left of the text: `digits(line_count) + 3` with line numbers, else 0.
+pub fn gutter_cols(s: &AppState, text: &TextContent) -> usize;
 
 struct LineBuilder { hscroll, width, col, used, buf: String, buf_style: Style, out: Vec<Span<'static>> }
 impl LineBuilder {
@@ -44,10 +56,15 @@ content, one row per line (no soft wrap).
   piece cut by the scroll edge (wide char, tab) is replaced by spaces for its visible part.
 * Stops at the first piece that doesn't fit in `width` (a wide char never half-shows on
   the right).
+* `marks` (search matches, byte ranges in the same string) are applied last as
+  `.patch(theme.search_match)`, over syntax and diff tint. They are computed only for the
+  visible rows (`search_marks`, `Query::find_iter` on the line), so the renderer stays
+  pure and cheap.
 * Consecutive pieces with the same style are merged into one span.
 * If `base` has a background (diff tint), the rest of the row is filled with spaces in
   `base` so the tint reaches the edge.
 
 ## Tests
 `tabs_scroll_and_wide_chars`: tab expansion, hscroll, half-cut wide char → space, `^A`,
-wide char not fitting.
+wide char not fitting. `marks_styled_and_scrolled`: a mark spanning the hscroll edge is
+only styled on its visible part; `col_of_byte` agrees with `styled_line` on tabs / wide chars.

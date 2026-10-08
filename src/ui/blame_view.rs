@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use super::content_view::{cursor_style, digits, styled_line};
+use super::content_view::{cursor_style, digits, search_marks, styled_line};
 use super::fit;
 use super::theme::theme;
 use crate::app::state::AppState;
@@ -51,7 +51,7 @@ pub fn render(
     };
 
     let nw = if s.file.show_line_numbers { digits(text.line_count()) + 3 } else { 0 };
-    let text_w = (area.width as usize).saturating_sub(GUTTER + 2 + nw);
+    let text_w = (area.width as usize).saturating_sub(gutter_cols(s, text));
     let lines: Vec<Line> = (s.file.top..text.line_count())
         .take(area.height as usize)
         .map(|i| {
@@ -87,9 +87,15 @@ pub fn render(
             } else {
                 spans.push(Span::raw(" "));
             }
-            spans.extend(styled_line(text, hl, i, Style::default(), s.file.hscroll, text_w, s.opts.tab_width));
+            let marks = search_marks(s, text, i);
+            spans.extend(styled_line(text, hl, i, Style::default(), &marks, s.file.hscroll, text_w, s.opts.tab_width));
             cursor_style(Line::from(spans), s, i)
         })
         .collect();
     f.render_widget(Paragraph::new(lines), area);
+}
+
+/// Columns left of the text: blame gutter + ` │` + line numbers (or one space).
+pub fn gutter_cols(s: &AppState, text: &TextContent) -> usize {
+    GUTTER + 2 + if s.file.show_line_numbers { digits(text.line_count()) + 3 } else { 1 }
 }

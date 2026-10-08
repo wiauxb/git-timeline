@@ -21,6 +21,7 @@ pub struct Theme {
     pub status_badge: Style, pub status_tab: Style, pub status_tab_active: Style,
     pub status_info: Style, pub status_warn: Style, pub status_error: Style,
     pub danger: Style, pub link: Style,
+    pub search_match: Style,                                  // search hits (both panes)
     pub mono: bool,                                           // monochrome theme active
 }
 
@@ -37,4 +38,5 @@ fn monochrome() -> Theme;
 * **Monochrome** when `NO_COLOR` is set and non-empty: only `BOLD`, `DIM`, `REVERSED`,
   `UNDERLINED`; diff backgrounds are empty styles, `blame_age` is all `Reset`, `mono = true`
   (renderers then skip age coloring).
+* `search_match`: black on yellow (colored) / `REVERSED` (monochrome).
 * `link` (underline) marks blame hashes that can be jumped to.

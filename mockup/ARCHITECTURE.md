@@ -34,6 +34,7 @@ revision, plus a few alternative views.
 | Staleness | No per-job tickets: every result is cached, and `update::after_batch` re-derives what the current view still needs once per batch of events (gives debouncing of held keys for free). Only the timeline stream has a generation counter (reload) |
 | Cross-thread errors | Carried as `String` in `JobResult` |
 | Startup | Local state (`git status`) read **synchronously** before the TUI so the `Working tree` row is on top and selected before commits stream in |
+| Search | `/` searches the **focused pane**: the timeline (hash prefix + subject) or the file view (displayed lines, every view). Regex, smart case, incremental. It jumps and highlights, never filters. `n`/`N` next/previous match, wrapping. One search per pane, kept across revision changes |
 | Minimum git | **2.36** (`cat-file --batch-command`), checked at startup |
 
 ## 3. File tree
@@ -63,6 +64,7 @@ git-timeline/
 │   │   ├── mod.rs                re-exports
 │   │   ├── path.rs               `RepoPath` (byte-exact repo-relative path)
 │   │   ├── revision.rs           `Oid`, `RevisionId`, `TimelineEntry`, `ChangeKind`…
+│   │   ├── search.rs             `Query`: smart-case regex, hash-prefix matching
 │   │   ├── content.rs            `FileContent`, `TextContent`, binary detection
 │   │   ├── diff.rs               in-process diff → hunks → display rows
 │   │   ├── blame.rs              `BlameData`, `BlameLine`, `BlameKey`
@@ -73,6 +75,7 @@ git-timeline/
 │   │   ├── action.rs             `Action` (intents), `Effect` (side effects), `OpResult`
 │   │   ├── update.rs             reducer + `after_batch` (requests, re-anchoring, prefetch)
 │   │   ├── keymap.rs             key/mouse event → `Action`; `BINDINGS` table for help
+│   │   ├── search.rs             `/` search: per-pane query, prompt flow, hit lists, n/N
 │   │   └── cache.rs              LRU caches for content / highlight / diff / blame / details
 │   ├── worker/
 │   │   ├── mod.rs                worker pool, `Job` / `JobResult`, `run_inline` (tests)
@@ -155,7 +158,10 @@ Rules:
 | `[` / `]` | older / newer revision from either pane |
 | `1` `2` `3` `4` (or `F1`-`F4`) | view: content / diff vs previous / diff vs marked / blame |
 | `m` | mark / unmark the selected revision as compare base |
-| `n` / `N` | next / previous hunk (diff views) |
+| `/` | search the focused pane (regex, smart case, live) |
+| `n` / `N` | next / previous search match (wraps) |
+| `Esc` | clear the focused pane's search (file pane without search: focus timeline) |
+| `}` / `{` | next / previous hunk (diff views) |
 | `Enter` (blame view) | jump to the revision that last touched the line |
 | `#` | toggle line numbers |
 | `z` | zoom the file pane |
@@ -210,7 +216,8 @@ with `GIT_TERMINAL_PROMPT=0 GIT_OPTIONAL_LOCKS=0 LC_ALL=C`, pager env removed.
 
 * Side-by-side diff, word-level diff highlighting.
 * Soft wrap (`w`): horizontal scrolling only.
-* Search inside the file / filtering the commit list from inside the UI.
+* Filtering the commit list from inside the UI (search jumps, never hides rows);
+  searching full commit messages or authors.
 * Directories (only single files).
 * Config file; configuration is via CLI flags / env only.
 * `GIT_TIMELINE_LOG` debug logging.

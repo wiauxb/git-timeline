@@ -38,4 +38,10 @@ fn numbered(range) -> String;                  // "line i\n" lines
 | `content_reader_matches_git_show` | `BlobReader::read` of each entry matches `git show <oid>:<path>`; `Reload` rebuilds 4 entries |
 | `binary_symlink_too_large` | NUL ⇒ `Binary`; size over a lowered limit ⇒ `TooLarge`; symlink ⇒ `Symlink { target }` |
 | `renders_every_view` | TestBackend: Working tree row, subjects, content; diff (`+ five`, `@@`); blame (`not committed yet`); Compare without mark (`press m`); details popup; help (`Keys`); zoom hides the timeline |
+| `search_timeline_hash_and_subject` | `/` in the timeline: a subject word selects that commit live; a hash prefix selects it; `n` wraps with "search wrapped to top"; `Cancel` restores selection and previous query |
+| `search_file_all_views` | file search in Content jumps to the matching line; in DiffPrev it lands on the `+` row, skips hunk headers and searches removed rows on the old side; in Blame it ignores the gutter (author name not found); selecting another revision keeps the query and recomputes hits without moving the anchored cursor |
+| `search_horizontal_reveal` | a match at column 200 sets `hscroll = 192` and is visible in the render |
+| `search_invalid_regex_and_no_match` | `(` shows `invalid regex` and Enter keeps the prompt; unknown word → Enter closes with Warn "pattern not found" |
+| `search_renders_highlights` | TestBackend: prompt in the status bar, `k/M` counter, matched cells carry the `search_match` style |
+| `hunk_keys_moved` | keymap: `}` / `{` → hunks in diff views, `n` / `N` / `/` → search; `n` without a search → "no search — press / to search" |
 | `stale_results_are_cached_but_harmless` | a content result for a far entry is cached and does not move the cursor |

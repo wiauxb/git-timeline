@@ -8,6 +8,7 @@ pub mod diff;
 pub mod line_map;
 mod path;
 mod revision;
+mod search;
 
 pub use blame::*;
 pub use content::*;
@@ -15,3 +16,4 @@ pub use diff::*;
 pub use line_map::{LineAnchor, MappedLine};
 pub use path::RepoPath;
 pub use revision::*;
+pub use search::Query;

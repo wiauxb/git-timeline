@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::action::{Action, Effect, OpResult};
+use super::search::{self, Scope};
 use super::state::{diffable, AppState, Displayed, Focus, JobKey, Level, Overlay, StatusMessage, TextInput, ViewMode};
 use crate::model::line_map::map_line;
 use crate::model::{
@@ -77,6 +78,20 @@ pub fn update(s: &mut AppState, a: Action) -> Vec<Effect> {
         Action::ToggleMark => toggle_mark(s),
         Action::ToggleLineNumbers => s.file.show_line_numbers = !s.file.show_line_numbers,
 
+        Action::StartSearch => search::start(s),
+        Action::SearchNext => search::next(s, true),
+        Action::SearchPrev => search::next(s, false),
+        Action::Escape => match s.focus {
+            Focus::Timeline => {
+                search::clear(s, Scope::Timeline);
+            }
+            Focus::File => {
+                if !search::clear(s, Scope::File) {
+                    s.focus = Focus::Timeline;
+                }
+            }
+        },
+
         Action::ShowHelp => s.overlay = Some(Overlay::Help { scroll: 0 }),
         Action::ShowDetails => fx.extend(show_details(s)),
 
@@ -134,6 +149,7 @@ pub fn after_batch(s: &mut AppState) -> Vec<Effect> {
     let mut fx = request_missing(s);
     fx.extend(resolve_anchor(s));
     fx.extend(prefetch(s));
+    search::refresh(s);
     clamp_cursor(s);
     touch_displayed(s);
     fx
@@ -223,7 +239,7 @@ fn move_cursor(s: &mut AppState, d: isize) {
     scroll_to_cursor(s);
 }
 
-fn scroll_to_cursor(s: &mut AppState) {
+pub(super) fn scroll_to_cursor(s: &mut AppState) {
     let rows = s.file_rows();
     if s.file.cursor < s.file.top {
         s.file.top = s.file.cursor;
@@ -398,16 +414,18 @@ fn overlay_action(s: &mut AppState, a: &Action) -> Option<Vec<Effect>> {
             s.overlay = None
         }
 
+        (Overlay::Search(p), a) => match a {
+            Action::Confirm => search::confirm(s),
+            Action::Cancel => search::cancel(s),
+            a => {
+                if edit_input(&mut p.input, a) {
+                    search::edited(s);
+                }
+            }
+        },
+
         (Overlay::ExportPrompt { input, error, .. }, a) => {
             match a {
-                Action::InputChar(c) => input.insert(&c.to_string()),
-                Action::InputPaste(t) => input.insert(&t.replace(['\n', '\r'], "")),
-                Action::InputBackspace => input.backspace(),
-                Action::InputDelete => input.delete(),
-                Action::InputLeft => input.cursor = input.cursor.saturating_sub(1),
-                Action::InputRight => input.cursor = (input.cursor + 1).min(input.value.chars().count()),
-                Action::InputHome => input.cursor = 0,
-                Action::InputEnd => input.cursor = input.value.chars().count(),
                 Action::Cancel => s.overlay = None,
                 Action::Confirm => {
                     let value = input.value.trim().to_string();
@@ -428,7 +446,9 @@ fn overlay_action(s: &mut AppState, a: &Action) -> Option<Vec<Effect>> {
                         }
                     }
                 }
-                _ => {}
+                a => {
+                    edit_input(input, a);
+                }
             }
         }
 
@@ -457,6 +477,22 @@ fn overlay_action(s: &mut AppState, a: &Action) -> Option<Vec<Effect>> {
         _ => {}
     }
     Some(fx)
+}
+
+/// Text-input editing shared by the export and search prompts. True = the text changed.
+fn edit_input(input: &mut TextInput, a: &Action) -> bool {
+    match a {
+        Action::InputChar(c) => input.insert(&c.to_string()),
+        Action::InputPaste(t) => input.insert(&t.replace(['\n', '\r'], "")),
+        Action::InputBackspace => input.backspace(),
+        Action::InputDelete => input.delete(),
+        Action::InputLeft => input.cursor = input.cursor.saturating_sub(1),
+        Action::InputRight => input.cursor = (input.cursor + 1).min(input.value.chars().count()),
+        Action::InputHome => input.cursor = 0,
+        Action::InputEnd => input.cursor = input.value.chars().count(),
+        _ => return false,
+    }
+    matches!(a, Action::InputChar(_) | Action::InputPaste(_) | Action::InputBackspace | Action::InputDelete)
 }
 
 fn op_done(s: &mut AppState, r: OpResult) -> Vec<Effect> {
@@ -499,6 +535,7 @@ fn reload(s: &mut AppState) -> Vec<Effect> {
     s.timeline_loading = true;
     s.cache.invalidate_local();
     s.in_flight.retain(|k| !matches!(k, JobKey::Content(BlobSource::WorkingTree(_))));
+    search::reset_timeline_hits(s);
     s.needs_requests = true;
     info(s, Level::Info, "reloading…");
     vec![
@@ -539,6 +576,7 @@ fn job_done(s: &mut AppState, r: JobResult) -> Vec<Effect> {
         }
         JobResult::LocalState(Ok(local)) => {
             s.timeline.set_local(local);
+            search::reset_timeline_hits(s);
             reselect(s);
         }
         JobResult::LocalState(Err(e)) => info(s, Level::Error, format!("git status failed: {e}")),

@@ -2,7 +2,7 @@
 
 ## Purpose
 Domain types shared by every layer. **Pure**: no IO, no git process. The only external
-types used are `similar::DiffOp` (diff ops) and `chrono` dates.
+types used are `similar::DiffOp` (diff ops), `chrono` dates and `regex::Regex` (search).
 
 ## Contents
 
@@ -14,6 +14,7 @@ pub mod diff;       pub use diff::*;      // FileDiff, Hunk, DiffLine, DiffRow, 
                                           // compute, source_line_of_row, row_of_source_line
 pub mod line_map;   pub use line_map::{LineAnchor, MappedLine};   // + map_line
 mod path;           pub use path::RepoPath;
+mod search;         pub use search::Query;
 mod revision;       pub use revision::*;  // Oid, RevisionId, Signature, CommitMeta, FileMode,
                                           // ChangeKind, BlobSource, TimelineEntry, Timeline
 ```

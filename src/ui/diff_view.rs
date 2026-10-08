@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use super::content_view::{cursor_style, digits, styled_line};
+use super::content_view::{cursor_style, digits, search_marks, styled_line};
 use super::theme::theme;
 use crate::app::state::AppState;
 use crate::highlight::HighlightedText;
@@ -37,9 +37,8 @@ pub fn render(f: &mut Frame, area: Rect, s: &AppState, d: &DiffInputs) {
         return;
     }
 
-    let max_line = d.old.map(|x| x.line_count()).unwrap_or(0).max(d.new.map(|x| x.line_count()).unwrap_or(0));
-    let nw = if s.file.show_line_numbers { digits(max_line) } else { 0 };
-    let gutter = if nw > 0 { nw * 2 + 4 } else { 2 };
+    let nw = number_width(s, d.old, d.new);
+    let gutter = gutter_cols(s, d.old, d.new);
     let text_w = (area.width as usize).saturating_sub(gutter);
     let num = |n: Option<usize>| match n {
         Some(n) if nw > 0 => format!("{:>nw$}", n + 1),
@@ -75,7 +74,8 @@ pub fn render(f: &mut Frame, area: Rect, s: &AppState, d: &DiffInputs) {
                     if let Some((text, hl)) = side {
                         // without colors, unhighlighted +/- lines take the marker's style
                         let base = if hl.is_none() && marker != " " { base.patch(mstyle) } else { base };
-                        spans.extend(styled_line(text, hl, idx, base, s.file.hscroll, text_w, s.opts.tab_width));
+                        let marks = search_marks(s, text, idx);
+                        spans.extend(styled_line(text, hl, idx, base, &marks, s.file.hscroll, text_w, s.opts.tab_width));
                         if is_last_without_newline(text, idx) {
                             spans.push(Span::styled(" ⏎̸ no newline at end of file", t.dim));
                         }
@@ -87,6 +87,24 @@ pub fn render(f: &mut Frame, area: Rect, s: &AppState, d: &DiffInputs) {
         })
         .collect();
     f.render_widget(Paragraph::new(lines), area);
+}
+
+/// Width of one line-number column (0 when numbers are off).
+fn number_width(s: &AppState, old: Option<&TextContent>, new: Option<&TextContent>) -> usize {
+    let max_line = old.map(|x| x.line_count()).unwrap_or(0).max(new.map(|x| x.line_count()).unwrap_or(0));
+    if s.file.show_line_numbers {
+        digits(max_line)
+    } else {
+        0
+    }
+}
+
+/// Columns left of the text: old/new numbers + ` │`, then the 2-col marker.
+pub fn gutter_cols(s: &AppState, old: Option<&TextContent>, new: Option<&TextContent>) -> usize {
+    match number_width(s, old, new) {
+        0 => 2,
+        nw => nw * 2 + 4,
+    }
 }
 
 fn is_last_without_newline(t: &TextContent, line: usize) -> bool {

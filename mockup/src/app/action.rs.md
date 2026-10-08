@@ -26,10 +26,14 @@ pub enum Action {
     ToggleFocus, FocusFile, FocusTimeline, ToggleZoom,
     SetView(ViewMode), ToggleMark, ToggleLineNumbers,
 
+    // search (app/search.rs), scope = focused pane
+    StartSearch, SearchNext, SearchPrev,
+    Escape,                             // file: clear search, else FocusTimeline; timeline: clear search
+
     // overlays
     ShowHelp, ShowDetails,
     InputChar(char), InputBackspace, InputDelete, InputLeft, InputRight,
-    InputHome, InputEnd, InputPaste(String),
+    InputHome, InputEnd, InputPaste(String),   // export prompt and search prompt
     Confirm, Cancel,
 
     // operations

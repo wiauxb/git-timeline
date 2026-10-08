@@ -12,7 +12,7 @@ use git_timeline::cli::{InitialView, UiOptions};
 use git_timeline::git::blob::BlobReader;
 use git_timeline::git::repo::RepoContext;
 use git_timeline::highlight::Highlighter;
-use git_timeline::model::{BlobSource, FileContent, FileMode, RevisionId};
+use git_timeline::model::{BlobSource, DiffLine, DiffRow, FileContent, FileMode, RevisionId};
 use git_timeline::ui::{self, LayoutInfo};
 use git_timeline::worker::{run_inline, Job, JobResult};
 use ratatui::backend::TestBackend;
@@ -334,4 +334,203 @@ fn stale_results_are_cached_but_harmless() {
     h.settle();
     assert_eq!(h.s.file.cursor, cursor);
     assert!(matches!(h.s.cache.content_for(&far.blob), Ok(Some(_))));
+}
+
+// ───────────────────────────── search ─────────────────────────────
+
+impl Harness {
+    fn type_str(&mut self, text: &str) {
+        for c in text.chars() {
+            self.act(Action::InputChar(c));
+        }
+    }
+
+    fn status(&self) -> String {
+        self.s.status.as_ref().map(|m| m.text.clone()).unwrap_or_default()
+    }
+}
+
+fn three_commits() -> (Fixture, Vec<String>) {
+    let f = Fixture::new();
+    let a = f.edit("a.txt", "1\n", "first: alpha");
+    let b = f.edit("a.txt", "2\n", "second: beta");
+    let c = f.edit("a.txt", "3\n", "third: gamma");
+    (f, vec![a, b, c])
+}
+
+#[test]
+fn search_timeline_hash_and_subject() {
+    let (f, oids) = three_commits();
+    let mut h = Harness::new(&f, &["a.txt"]);
+    assert_eq!(h.s.selected_idx, 0);
+
+    h.act(Action::StartSearch);
+    h.type_str("bet");
+    assert_eq!(h.s.selected_idx, 1, "live jump while typing");
+    h.act(Action::Confirm);
+    assert!(h.s.overlay.is_none());
+    h.act(Action::SearchNext);
+    assert_eq!(h.s.selected_idx, 1, "single hit: wraps onto itself");
+    assert_eq!(h.status(), "search wrapped to top");
+
+    // hash prefix, case-insensitive; then Esc restores selection and previous query
+    h.act(Action::StartSearch);
+    h.type_str(&oids[0][..6].to_uppercase());
+    assert_eq!(h.s.selected_idx, 2);
+    h.act(Action::Cancel);
+    assert_eq!(h.s.selected_idx, 1);
+    assert_eq!(h.s.search.timeline.as_ref().map(|q| q.pattern().to_string()).as_deref(), Some("bet"));
+
+    // a hash *suffix* does not match
+    h.act(Action::StartSearch);
+    h.type_str(&oids[0][34..]);
+    assert!(h.s.search.timeline_hits.rows.is_empty());
+    h.act(Action::Cancel);
+
+    h.act(Action::Escape);
+    assert!(h.s.search.timeline.is_none());
+    assert_eq!(h.status(), "search cleared");
+}
+
+#[test]
+fn search_file_all_views() {
+    let f = Fixture::new();
+    f.edit("a.txt", &numbered(0..30), "base");
+    let changed = numbered(0..30).replace("line 20\n", "line 20 needle\n");
+    f.edit("a.txt", &changed, "add needle");
+    let mut h = Harness::new(&f, &["a.txt"]);
+    h.act(Action::FocusFile);
+
+    h.act(Action::StartSearch);
+    h.type_str("needle");
+    h.act(Action::Confirm);
+    assert_eq!(h.s.file.cursor, 20, "content view");
+
+    h.act(Action::SetView(ViewMode::DiffPrev));
+    h.act(Action::SearchNext);
+    let d = h.s.displayed();
+    let Displayed::Diff { rows, .. } = &d else { panic!("diff expected") };
+    assert!(matches!(rows[h.s.file.cursor], DiffRow::Line(DiffLine::Added { new: 20 })));
+    for &r in &h.s.search.file_hits.rows {
+        assert!(!matches!(rows[r], DiffRow::HunkHeader(_)), "hunk headers are not searched");
+    }
+    drop(d);
+    h.act(Action::StartSearch);
+    h.type_str("line 20");
+    h.act(Action::Confirm);
+    let Displayed::Diff { rows, .. } = h.s.displayed() else { panic!() };
+    let removed = h.s.search.file_hits.rows.iter().any(|&r| matches!(rows[r], DiffRow::Line(DiffLine::Removed { .. })));
+    assert!(removed, "removed rows are searched on the old side");
+
+    // blame: the gutter (hashes, author names) is not searched
+    h.act(Action::SetView(ViewMode::Blame));
+    h.act(Action::StartSearch);
+    h.type_str("Alice");
+    h.act(Action::Confirm);
+    assert!(h.s.search.file_hits.rows.is_empty(), "{:?}", h.s.search.file_hits.rows);
+    h.act(Action::StartSearch);
+    h.type_str("needle");
+    h.act(Action::Confirm);
+    assert_eq!(h.s.search.file_hits.rows, vec![20]);
+    h.act(Action::CursorDown(3));
+
+    // older revision: query kept, hits recomputed, cursor anchored (not moved to a match)
+    h.act(Action::SelectNext);
+    assert_eq!(h.s.selected_idx, 1);
+    assert!(h.s.search.file.is_some());
+    assert!(h.s.search.file_hits.rows.is_empty());
+    assert_eq!(h.s.file.cursor, 23);
+
+    h.act(Action::Escape);
+    assert!(h.s.search.file.is_none());
+    assert_eq!(h.s.focus, Focus::File, "first Esc only clears the search");
+    h.act(Action::Escape);
+    assert_eq!(h.s.focus, Focus::Timeline);
+}
+
+#[test]
+fn search_horizontal_reveal() {
+    let f = Fixture::new();
+    let long = format!("{}needle\nshort\n", "x".repeat(200));
+    f.edit("a.txt", &long, "long line");
+    let mut h = Harness::new(&f, &["a.txt"]);
+    h.act(Action::FocusFile);
+    h.act(Action::StartSearch);
+    h.type_str("needle");
+    h.act(Action::Confirm);
+    assert_eq!(h.s.file.hscroll, 192);
+    assert!(h.render().contains("needle"));
+}
+
+#[test]
+fn search_invalid_regex_and_no_match() {
+    let (f, _) = three_commits();
+    let mut h = Harness::new(&f, &["a.txt"]);
+    h.act(Action::StartSearch);
+    h.type_str("(");
+    let Some(Overlay::Search(p)) = &h.s.overlay else { panic!("prompt expected") };
+    assert!(p.error.is_some());
+    assert!(h.render().contains("invalid regex"));
+    h.act(Action::Confirm);
+    assert!(matches!(h.s.overlay, Some(Overlay::Search(_))), "invalid regex keeps the prompt open");
+
+    h.act(Action::InputBackspace);
+    h.type_str("zzz");
+    assert_eq!(h.s.selected_idx, 0);
+    h.act(Action::Confirm);
+    assert!(h.s.overlay.is_none());
+    assert_eq!(h.status(), "pattern not found: zzz");
+    h.act(Action::SearchNext);
+    assert_eq!(h.status(), "pattern not found: zzz");
+}
+
+#[test]
+fn search_renders_highlights() {
+    let (f, _) = three_commits();
+    let mut h = Harness::new(&f, &["a.txt"]);
+    h.act(Action::StartSearch);
+    h.type_str("bet");
+    let screen = h.render();
+    let last = screen.lines().last().unwrap();
+    assert!(last.contains(" /bet") && last.contains("1 match"), "{last}");
+    h.act(Action::Confirm);
+    let screen = h.render();
+    assert!(screen.lines().last().unwrap().contains("/bet 1/1"), "{screen}");
+
+    // the matched cells carry the search style
+    let mut term = Terminal::new(TestBackend::new(120, 30)).unwrap();
+    term.draw(|f| {
+        ui::draw(f, &h.s);
+    })
+    .unwrap();
+    let buf = term.backend().buffer().clone();
+    // skip row 0: the file pane title also shows the subject
+    let y = screen.lines().skip(1).position(|l| l.contains("second: beta")).unwrap() as u16 + 1;
+    let row: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol().to_string()).collect();
+    let x = row.find("beta").unwrap();
+    let x = row[..x].chars().count() as u16;
+    let hit = git_timeline::ui::theme::theme().search_match;
+    let style = buf[(x, y)].style();
+    assert!(hit.bg.is_none() || style.bg == hit.bg, "{style:?}");
+    assert!(style.add_modifier.contains(hit.add_modifier));
+    assert_eq!(buf[(x + 2, y)].style(), style, "'t' is marked");
+    assert_ne!(buf[(x + 3, y)].style(), style, "'a' is not");
+}
+
+#[test]
+fn hunk_keys_moved() {
+    use git_timeline::app::keymap::map;
+    use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    let (f, _) = three_commits();
+    let mut h = Harness::new(&f, &["a.txt"]);
+    h.act(Action::FocusFile);
+    h.act(Action::SetView(ViewMode::DiffPrev));
+    let key = |c| Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+    assert!(matches!(map(&h.s, key('}')), Some(Action::NextHunk)));
+    assert!(matches!(map(&h.s, key('{')), Some(Action::PrevHunk)));
+    assert!(matches!(map(&h.s, key('n')), Some(Action::SearchNext)));
+    assert!(matches!(map(&h.s, key('N')), Some(Action::SearchPrev)));
+    assert!(matches!(map(&h.s, key('/')), Some(Action::StartSearch)));
+    h.act(Action::SearchNext);
+    assert_eq!(h.status(), "no search — press / to search");
 }

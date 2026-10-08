@@ -17,7 +17,7 @@ pub fn select(s: &mut AppState, idx: usize);
 // private: select_delta, capture_anchor, ensure_list_visible, reselect, move_cursor,
 // scroll_to_cursor, clamp_cursor, jump_hunk, blame_jump, set_view, toggle_mark,
 // show_details, selected_bytes, start_export, start_restore, resolve_dest,
-// overlay_action, op_done, reload, job_done, want_content, want_highlight, want_diff,
+// overlay_action, edit_input, op_done, reload, job_done, want_content, want_highlight, want_diff,
 // request_missing, prefetch, resolve_anchor, touch_displayed
 ```
 
@@ -39,7 +39,8 @@ Actions never submit content jobs directly; they set `needs_requests = true`.
      when both contents are `diffable`.
 2. `resolve_anchor` (below).
 3. `prefetch` — Low priority content of entries `idx±2` (and their `prev_blob` in DiffPrev).
-4. `clamp_cursor`, `touch_displayed` (promote displayed keys + anchor key in the LRU).
+4. `search::refresh` — keep the search hit lists in step with the timeline / display.
+5. `clamp_cursor`, `touch_displayed` (promote displayed keys + anchor key in the LRU).
 
 Every `JobResult` is **always cached** and removed from `in_flight`; staleness needs no
 bookkeeping because the next `after_batch` re-derives needs from the current selection.
@@ -65,7 +66,12 @@ Holding `j` therefore only requests what is selected at the end of each batch.
   the clamped old index.
 
 ## Other behaviors
-* **Hunks** `n`/`N`: jump to next/previous `HunkHeader` row (top = row - 1); at the end →
+* **Search** (`StartSearch`, `SearchNext/Prev`, `Escape`, and the prompt's input /
+  `Confirm` / `Cancel` while `Overlay::Search` is open): delegated to `app/search.rs`.
+  `Reload` and `LocalState` call `search::reset_timeline_hits`. Text editing
+  (`InputChar` … `InputEnd`) is shared by the export and search prompts (`edit_input`,
+  returns whether the text changed ⇒ `search::edited`).
+* **Hunks** `}`/`{`: jump to next/previous `HunkHeader` row (top = row - 1); at the end →
   Info "last hunk"/"first hunk" (no wrap to another revision).
 * **BlameJump** (Blame view only): null oid → "line not committed yet"; commit in timeline →
   select it + Info "jumped to abc1234"; else Warn "… is not in the current timeline".

@@ -755,6 +755,7 @@ dependencies = [
  "crossbeam-channel",
  "lru",
  "ratatui",
+ "regex",
  "similar",
  "syntect",
  "tempfile",

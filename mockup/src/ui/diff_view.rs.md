@@ -19,6 +19,9 @@ pub struct DiffInputs<'a> {
 pub fn render(f: &mut Frame, area: Rect, s: &AppState, d: &DiffInputs);
 pub fn summary(old: &FileContent, new: &FileContent) -> String;   // "binary, 1.2 KiB  →  absent"
 pub fn human(n: u64) -> String;                                   // B / KiB / MiB, 1 decimal
+/// Columns left of the text: `2 × digits + 4` with line numbers, else 2 (marker).
+pub fn gutter_cols(s: &AppState, old: Option<&TextContent>, new: Option<&TextContent>) -> usize;
+fn number_width(s: &AppState, old: Option<&TextContent>, new: Option<&TextContent>) -> usize;
 fn is_last_without_newline(t: &TextContent, line: usize) -> bool;
 fn mode_str(m: FileMode) -> &'static str;                         // "100644" …
 ```
@@ -39,6 +42,7 @@ fn mode_str(m: FileMode) -> &'static str;                         // "100644" �
   rows, `new` for context/added rows). Unhighlighted `+`/`-` rows take the marker color.
 * Hunk header row: `@@ -a,b +c,d @@` (1-based starts, no function context).
 * Last line of a side without trailing newline gets a dim ` ⏎̸ no newline at end of file`.
+* Search matches (`content_view::search_marks`) highlighted on `Line` rows, never on hunk headers.
 * Cursor row styled with `content_view::cursor_style`.
 
 ## Empty diff (no rows)

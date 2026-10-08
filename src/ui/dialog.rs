@@ -22,6 +22,7 @@ pub fn render(f: &mut Frame, area: Rect, s: &AppState, overlay: &Overlay) {
         Overlay::ExportPrompt { input, error, .. } => export_prompt(f, area, input, error.as_deref()),
         Overlay::ConfirmOverwrite { dest, .. } => confirm_overwrite(f, area, dest),
         Overlay::Error { message } => error(f, area, message),
+        Overlay::Search(_) => {} // drawn by the status bar
     }
 }
 

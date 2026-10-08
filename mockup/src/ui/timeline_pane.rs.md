@@ -8,7 +8,12 @@ Render the left pane: the list of revisions of the file.
 ```rust
 pub fn render(f: &mut Frame, area: Rect, s: &AppState);
 fn change_span(c: &ChangeKind, conflicted: bool) -> Span<'static>;
-fn row(e: &TimelineEntry, marked: bool, selected: bool, width: usize, now: DateTime<Local>) -> Line<'static>;
+fn row(e: &TimelineEntry, marked: bool, selected: bool, width: usize, now: DateTime<Local>,
+       search: Option<&Query>) -> Line<'static>;
+/// `text` as spans, the byte ranges `marks` patched with `search_match`.
+fn marked(text: &str, marks: &[Range<usize>], style: Style) -> Vec<Span<'static>>;
+/// Matches in `hay` (a prefix of `full`), cut to the prefix `fit` kept in `shown`.
+fn fitted_marks(q: Option<&Query>, hay: &str, full: &str, shown: &str) -> Vec<Range<usize>>;
 ```
 
 ## Title
@@ -38,4 +43,8 @@ column is shown), the change letter, then a dim word: `conflicted`, `untracked`,
 * Rows `list_offset .. list_offset + inner.height` (offset maintained by `update.rs`).
 * Selected row: whole line styled `selected_row` (focused) or `selected_row_unfocused`.
 * One row per entry, no separator rows (row index == entry index; mouse clicks rely on it).
+* Timeline search: matches are styled `search_match` (patched over the row style,
+  selected row included). Hash: the matched prefix, cut to the 7 shown chars. Subject:
+  every `find_iter` range, cut where `fit` truncates. Pseudo-entries: the matched part of
+  the label.
 * Empty timeline: centered dim `loading history…` (while streaming) or `no revisions`.

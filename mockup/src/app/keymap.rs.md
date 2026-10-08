@@ -21,13 +21,13 @@ fn map_mouse(s: &AppState, m: MouseEvent) -> Option<Action>;
 
 ## Event mapping
 * Key events: `Press` and `Repeat` (Release ignored).
-* `Paste(text)` → `InputPaste` only in `ExportPrompt`.
+* `Paste(text)` → `InputPaste` only in `ExportPrompt` / `Search`.
 * `Resize` → `Layout(s.layout)` (forces a redraw; the draw computes the new layout).
 
 ## Resolution order (keys)
 1. `Ctrl-C` → `Quit`, always.
 2. Overlay open → overlay keys only:
-   * **ExportPrompt**: `Enter` Confirm, `Esc` Cancel, `Backspace`, `Delete`, `←/→`,
+   * **ExportPrompt** and **Search** (same text-input keys): `Enter` Confirm, `Esc` Cancel, `Backspace`, `Delete`, `←/→`,
      `Home/End`, `Ctrl-A/Ctrl-E` (home/end), other chars → `InputChar`.
    * **ConfirmRestore / ConfirmOverwrite**: `y`/`Y` Confirm; `n`/`N`/`q`/`Esc` Cancel.
      **`Enter` does nothing** (no accidental confirmation).
@@ -53,6 +53,8 @@ fn map_mouse(s: &AppState, m: MouseEvent) -> Option<Action>;
 | `e` | StartExport |
 | `R` | StartRestore |
 | `r` | Reload |
+| `/` | StartSearch (focused pane) |
+| `n` / `N` | SearchNext / SearchPrev (focused pane) |
 
 ### Timeline pane
 | Keys | Action |
@@ -61,6 +63,7 @@ fn map_mouse(s: &AppState, m: MouseEvent) -> Option<Action>;
 | `g`/`Home`, `G`/`End` | SelectFirst / SelectLast |
 | `PgDn`/`Ctrl-F`, `PgUp`/`Ctrl-B` | SelectPageDown / SelectPageUp |
 | `Enter`, `l`, `→` | FocusFile |
+| `Esc` | Escape (clear the timeline search) |
 
 ### File pane
 | Keys | Action |
@@ -71,8 +74,8 @@ fn map_mouse(s: &AppState, m: MouseEvent) -> Option<Action>;
 | `g`/`Home`, `G`/`End` | Top / Bottom |
 | `h`/`←`, `l`/`→` | ScrollLeft / ScrollRight |
 | `#` | ToggleLineNumbers |
-| `Esc` | FocusTimeline |
-| `n` / `N` (diff views) | NextHunk / PrevHunk |
+| `Esc` | Escape (clear the file search, else FocusTimeline) |
+| `}` / `{` (diff views) | NextHunk / PrevHunk |
 | `Enter` (blame view) | BlameJump |
 
 ### Mouse (ignored while an overlay is open)

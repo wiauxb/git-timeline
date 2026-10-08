@@ -52,18 +52,21 @@ pub static BINDINGS: &[Binding] = &[
     b("e", "export this version to a file", Context::Global),
     b("R", "restore this version into the working tree", Context::Global),
     b("r", "reload history and local changes", Context::Global),
+    b("/", "search the focused pane (regex, smart case)", Context::Global),
+    b("n N", "next / previous search match", Context::Global),
     b("j k  ↓ ↑", "older / newer revision", Context::Timeline),
     b("g G  Home End", "newest / oldest", Context::Timeline),
     b("PgDn PgUp  Ctrl-F Ctrl-B", "page down / up", Context::Timeline),
     b("Enter  l  →", "focus the file pane", Context::Timeline),
+    b("Esc", "clear the search", Context::Timeline),
     b("j k  ↓ ↑", "move cursor", Context::File),
     b("Ctrl-D Ctrl-U", "half page down / up", Context::File),
     b("PgDn Space  PgUp", "page down / up", Context::File),
     b("g G", "top / bottom", Context::File),
     b("h l  ← →", "scroll horizontally", Context::File),
     b("#", "toggle line numbers", Context::File),
-    b("Esc", "back to the timeline", Context::File),
-    b("n N", "next / previous hunk", Context::DiffViews),
+    b("Esc", "clear the search, else back to the timeline", Context::File),
+    b("}  {", "next / previous hunk", Context::DiffViews),
     b("Enter", "jump to the revision that last changed the line", Context::BlameView),
 ];
 
@@ -72,7 +75,7 @@ pub fn map(s: &AppState, ev: Event) -> Option<Action> {
         Event::Key(k) if k.kind != KeyEventKind::Release => map_key(s, k),
         Event::Mouse(m) => map_mouse(s, m),
         Event::Paste(text) => match s.overlay {
-            Some(Overlay::ExportPrompt { .. }) => Some(Action::InputPaste(text)),
+            Some(Overlay::ExportPrompt { .. } | Overlay::Search(_)) => Some(Action::InputPaste(text)),
             _ => None,
         },
         // redraw; the new layout is computed by the draw itself
@@ -90,7 +93,7 @@ fn map_key(s: &AppState, k: KeyEvent) -> Option<Action> {
 
     if let Some(o) = &s.overlay {
         return match o {
-            Overlay::ExportPrompt { .. } => match k.code {
+            Overlay::ExportPrompt { .. } | Overlay::Search(_) => match k.code {
                 Enter => Some(Action::Confirm),
                 Esc => Some(Action::Cancel),
                 Backspace => Some(Action::InputBackspace),
@@ -134,6 +137,7 @@ fn map_key(s: &AppState, k: KeyEvent) -> Option<Action> {
             Char('f') if ctrl => Some(Action::SelectPageDown),
             Char('b') if ctrl => Some(Action::SelectPageUp),
             Enter | Char('l') | Right => Some(Action::FocusFile),
+            Esc => Some(Action::Escape),
             _ => None,
         },
         Focus::File => match k.code {
@@ -150,9 +154,9 @@ fn map_key(s: &AppState, k: KeyEvent) -> Option<Action> {
             Char('h') | Left => Some(Action::ScrollLeft),
             Char('l') | Right => Some(Action::ScrollRight),
             Char('#') => Some(Action::ToggleLineNumbers),
-            Esc => Some(Action::FocusTimeline),
-            Char('n') if s.view.is_diff() => Some(Action::NextHunk),
-            Char('N') if s.view.is_diff() => Some(Action::PrevHunk),
+            Esc => Some(Action::Escape),
+            Char('}') if s.view.is_diff() => Some(Action::NextHunk),
+            Char('{') if s.view.is_diff() => Some(Action::PrevHunk),
             Enter if s.view == ViewMode::Blame => Some(Action::BlameJump),
             _ => None,
         },
@@ -181,6 +185,9 @@ fn map_key(s: &AppState, k: KeyEvent) -> Option<Action> {
         Char('e') => Some(Action::StartExport),
         Char('R') => Some(Action::StartRestore),
         Char('r') => Some(Action::Reload),
+        Char('/') => Some(Action::StartSearch),
+        Char('n') => Some(Action::SearchNext),
+        Char('N') => Some(Action::SearchPrev),
         _ => None,
     }
 }

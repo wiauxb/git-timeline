@@ -19,6 +19,7 @@ crossbeam-channel = "0.5"
 lru = "0.18"
 bstr = "1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+regex = "1" # `/` search (already in the tree via syntect)
 unicode-width = "0.2"
 thiserror = "2"
 anyhow = "1"

@@ -12,6 +12,10 @@ fn placeholder(f: &mut Frame, area: Rect, msg: &str);              // dim, cente
 fn describe(c: &FileContent, s: &AppState) -> String;              // non-text content message
 fn title(s: &AppState, width: usize) -> Line<'static>;
 fn header(s: &AppState, d: &Displayed) -> Line<'static>;
+/// Columns left of the text in the current view: dispatches to the `gutter_cols` of
+/// `content_view` / `diff_view` / `blame_view` (which the renderers use themselves), so
+/// the search's horizontal reveal and the rendering agree.
+pub fn gutter_cols(s: &AppState, d: &Displayed) -> usize;
 ```
 
 ## Geometry

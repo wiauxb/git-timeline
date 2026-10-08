@@ -31,6 +31,7 @@ pub enum Overlay {
     ExportPrompt { rev: RevisionId, input: TextInput, error: Option<String> },
     ConfirmOverwrite { rev: RevisionId, dest: PathBuf },
     Error { message: String },
+    Search(SearchPrompt),            // app/search.rs; drawn in the status bar, not a popup
 }
 
 pub enum Level { Info, Warn, Error }
@@ -58,6 +59,7 @@ pub struct AppState {
 
     pub view: ViewMode,                  // from --view: content / diff (DiffPrev) / blame
     pub file: FileViewState,
+    pub search: SearchState,             // app/search.rs: one query per pane + hit lists
 
     pub in_flight: HashSet<JobKey>,      // dedupe submitted jobs
     pub cache: Caches,
@@ -90,7 +92,7 @@ pub enum Displayed {
     Text { key: ContentKey, content: Arc<FileContent>, hl: Option<Arc<HighlightedText>>,
            hl_note: Option<&'static str>, path: RepoPath },
     Diff { diff: Arc<FileDiff>, rows: Vec<DiffRow>, old: Arc<FileContent>, new: Arc<FileContent>,
-           old_hl, new_hl: Option<Arc<HighlightedText>>, new_key: ContentKey,
+           old_hl, new_hl: Option<Arc<HighlightedText>>, old_key, new_key: ContentKey,
            old_label: String, new_label: String, old_mode: FileMode, new_mode: FileMode },
     DiffSummary { old: Arc<FileContent>, new: Arc<FileContent>, old_label: String, new_label: String },
 }

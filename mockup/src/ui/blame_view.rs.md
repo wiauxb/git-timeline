@@ -11,6 +11,8 @@ const GUTTER: usize = 28;
 
 pub fn render(f: &mut Frame, area: Rect, s: &AppState, text: &TextContent,
               hl: Option<&HighlightedText>, blame: Option<Result<&BlameData, &str>>);
+/// Columns left of the text: GUTTER + 2 + (`digits + 3` with line numbers, else 1).
+pub fn gutter_cols(s: &AppState, text: &TextContent) -> usize;
 ```
 
 ## Layout
@@ -25,7 +27,7 @@ pub fn render(f: &mut Frame, area: Rect, s: &AppState, text: &TextContent,
   show a dim `   ┆` padded to 28.
 * Null oid ⇒ dim `(not committed yet)` padded to 28.
 * Then ` │`, then line numbers `{:>digits} │ ` (when shown) or a single space, then the
-  text via `styled_line`.
+  text via `styled_line`, with search matches (`content_view::search_marks`) on the text only.
 * Hash color = age bucket `round((newest − t) / (newest − oldest) × 5)` into
   `theme.blame_age` (skipped in monochrome); underlined (`link`) when that commit is in
   the current timeline (⇒ `Enter` can jump to it).

@@ -182,3 +182,16 @@ fn header(s: &AppState, d: &Displayed) -> Line<'static> {
     }
     Line::from(parts.join(" · "))
 }
+
+/// Columns left of the text in the current view. Shared with the search's horizontal reveal.
+pub fn gutter_cols(s: &AppState, d: &Displayed) -> usize {
+    match d {
+        Displayed::Text { content, .. } => match content.as_text() {
+            Some(t) if s.view == ViewMode::Blame => blame_view::gutter_cols(s, t),
+            Some(t) => content_view::gutter_cols(s, t),
+            None => 0,
+        },
+        Displayed::Diff { old, new, .. } => diff_view::gutter_cols(s, old.as_text(), new.as_text()),
+        _ => 0,
+    }
+}
