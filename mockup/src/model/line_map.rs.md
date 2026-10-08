@@ -1,50 +1,46 @@
 # `src/model/line_map.rs`
 
 ## Purpose
-Implement **"keep the same logical line"** when switching revision: given a line in
-version A, find the corresponding line in version B.
+**"Keep the same logical line"** when switching revision: given a line in version A, find
+the corresponding line in version B.
 
 ## Contents
 
 ```rust
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MappedLine {
-    Exact(usize),     // the line exists unchanged in B
-    Nearest(usize),   // the line was changed/removed; closest surviving line in B
+    Exact(usize),     // unchanged line
+    Nearest(usize),   // changed/removed; closest surviving line
 }
-
 impl MappedLine { pub fn line(&self) -> usize; }
 
-/// Direction-agnostic: `diff` is old→new; `forward=true` maps old→new,
-/// `forward=false` maps new→old.
-pub fn map_line(diff: &FileDiff, line: usize, forward: bool) -> MappedLine;
-
-/// What the view remembers to re-anchor after a revision change.
-#[derive(Clone)]
+/// What the view remembers to re-anchor after a revision or view change.
+#[derive(Clone, Debug)]
 pub struct LineAnchor {
-    pub content: ContentKey,     // version the line number refers to
-    pub line: usize,             // cursor line in that version
-    pub viewport_offset: usize,  // cursor row - top row, to restore the same screen position
+    pub content: ContentKey,     // version the line refers to
+    pub line: usize,
+    pub viewport_offset: usize,  // cursor row - top row
 }
+
+/// `diff` is old→new; forward=true maps old→new, false maps new→old.
+pub fn map_line(diff: &FileDiff, line: usize, forward: bool) -> MappedLine;
 ```
 
 ## Algorithm
-Walk `diff.ops` (sorted by position):
-* `Equal { old_index, new_index, len }` containing `line` ⇒ `Exact(new_index + (line - old_index))`.
-* `Delete { old_index, old_len, new_index }` containing `line` ⇒ `Nearest(new_index)` (the
-  line right after the deletion point, clamped to `new_len - 1`).
-* `Replace { old_index, old_len, new_index, new_len }` containing `line` ⇒
-  `Nearest(new_index + min(line - old_index, new_len - 1))` (proportional position
-  inside the replaced block).
-* `Insert` never contains an old line.
-Empty target ⇒ `Nearest(0)`.
+Target length = end of the last op's target range; empty target ⇒ `Nearest(0)`.
+Find the op whose source range contains `line` (`off = line - src.start`):
+* `Equal` ⇒ `Exact(dst.start + off)`.
+* empty target range (pure delete) ⇒ `Nearest(min(dst.start, target_len - 1))`.
+* otherwise (replace) ⇒ `Nearest(dst.start + min(off, dst.len - 1))`.
+No op contains it (beyond the end) ⇒ `Nearest(target_len - 1)`.
 
 ## Specs
-* The diff used is **between the two versions directly** (A vs B, whatever their
-  distance in history), not a composition of per-commit diffs. `update.rs` requests
-  `ComputeDiff{A, B}` if not cached; both contents are already loaded at that point.
-* After mapping, the view restores `viewport_offset` so the line stays at the same
-  screen row (clamped to bounds).
-* In **diff views** the anchor is translated to/from the *new side* line of the cursor row
-  (a `Removed` row anchors to the next new-side line).
-* Unit tests: unchanged file, line inside deleted block, inside replaced block of
-  different size, line at EOF, empty → non-empty and reverse.
+* The diff used is **between the two versions directly** (A vs B), never a composition of
+  per-commit diffs. `app/update.rs::resolve_anchor` requests it (`ComputeDiff`) when not
+  cached; same `ContentKey` on both sides ⇒ no diff needed, line kept.
+* After mapping, the view restores `viewport_offset` (clamped), avoids blank rows at the
+  bottom, and in diff views shows the hunk header just above the top row.
+
+## Tests
+Unchanged, insertion before (both directions), deleted block, replaced block of different
+size, delete at EOF, to/from empty.

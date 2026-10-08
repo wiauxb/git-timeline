@@ -2,33 +2,39 @@
 
 ## Purpose
 `RepoPath`: a path **relative to the repository toplevel**, stored as the exact bytes git
-uses. Prevents confusion between OS paths (relative to cwd) and git paths, and survives
-non-UTF-8 file names.
+uses. Keeps OS paths (relative to cwd) and git paths apart, and survives non-UTF-8 names.
 
 ## Contents
 
 ```rust
-#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub struct RepoPath(bstr::BString);
 
 impl RepoPath {
     /// Bytes as emitted by git with `-z` (no quoting, '/' separators).
     pub fn from_git_bytes(b: &[u8]) -> Self;
     pub fn as_bytes(&self) -> &[u8];
-    /// For `-- <pathspec>`: prefixes ":(literal)" so `*`, `?`, `[` in names are not globs.
-    pub fn as_literal_pathspec(&self) -> std::ffi::OsString;
-    /// For `<rev>:<path>` object names (used in rev-parse fallback).
-    pub fn as_object_suffix(&self) -> std::ffi::OsString;
-    /// toplevel.join(self) as an OS path (Unix: from raw bytes; Windows: lossy UTF-8).
-    pub fn to_fs_path(&self, toplevel: &std::path::Path) -> std::path::PathBuf;
+    /// For `-- <pathspec>`: ":(literal)" + path, so `*`, `?`, `[` are not globs.
+    pub fn as_literal_pathspec(&self) -> OsString;
+    /// Plain path argument (blame, ls-tree, `-L…:path`), no pathspec magic.
+    pub fn as_os(&self) -> OsString;
+    /// toplevel.join(path).
+    pub fn to_fs_path(&self, toplevel: &Path) -> PathBuf;
+    /// Last component.
     pub fn file_name(&self) -> &[u8];
+    /// Extension of the file name; a leading dot is not one (`.env` → None, `Makefile` → None).
     pub fn extension(&self) -> Option<&[u8]>;
-    pub fn display(&self) -> std::borrow::Cow<'_, str>;   // lossy, for UI only
+    /// Lossy UTF-8, for UI and messages only.
+    pub fn display(&self) -> Cow<'_, str>;
 }
 ```
 
 ## Specs
-* Never starts with `/` or `./`, never contains `..` components, uses `/` separators.
-* Constructed only by `git/repo.rs` (from the CLI argument) and git output parsers.
-* `-L<a>,<b>:<path>` does **not** accept pathspec magic, so `git/log.rs` uses the raw
-  bytes there, not `as_literal_pathspec`.
+* Never starts with `/` or `./`, no `..`, `/` separators.
+* Built only by `git/repo.rs` (from the CLI argument) and git output parsers.
+* Bytes → `OsString`: lossless on Unix (`OsStringExt::from_vec`), lossy UTF-8 elsewhere.
+* `-L<a>,<b>:<path>`, `git blame` and `git ls-tree` take plain paths (`as_os`), not pathspec
+  magic.
+
+## Tests
+File name / extension edge cases (`.env`, `Makefile`), literal pathspec prefix.

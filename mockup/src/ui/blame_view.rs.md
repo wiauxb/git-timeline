@@ -1,30 +1,39 @@
 # `src/ui/blame_view.rs`
 
 ## Purpose
-Render the file at the selected revision with a blame gutter showing, for each line,
-which commit last changed it (as of that revision).
+Render the file at the selected revision with a blame gutter showing, for each line, the
+commit that last changed it (as of that revision).
 
 ## Contents
 
 ```rust
-pub fn render(f: &mut Frame, area: Rect, s: &AppState,
-              text: &TextContent, hl: Option<&HighlightedText>, blame: Option<&BlameData>);
+const GUTTER: usize = 28;
+
+pub fn render(f: &mut Frame, area: Rect, s: &AppState, text: &TextContent,
+              hl: Option<&HighlightedText>, blame: Option<Result<&BlameData, &str>>);
 ```
 
 ## Layout
 ```
-abc1234 Alice   2024-03-02 │  1 │ use std::sync::Arc;
-                           │  2 │
-9f0e1d2 Bob     2023-11-20 │  3 │ pub struct App {
-                           │  4 │     state: AppState,
-00000000 (uncommitted)     │  5 │     dirty: bool,
+0fed366 Colin Ba… 2024-03-15 │  1 │ # ANSI formatting function
+   ┆                         │  2 │ # 0: reset, 1: bold
+0da7919 Robby Ru… 2026-09-07 │  3 │ omz_f() {
+(not committed yet)          │  4 │   x=5
 ```
-* Gutter width 28 cols: short oid, author (truncated to 8), ISO date; printed only on
-  `group_start` lines.
-* The short oid is colored by **age** (`theme.blame_age`, 6 buckets between oldest and
-  newest commit in this blame).
-* If the commit is **in the timeline**, its oid is underlined: `Enter` (BlameJump) selects
-  that revision; otherwise status "commit not in current timeline (filtered)".
-* Cursor line: gutter shows the full summary of that line's commit in the status bar.
-* Blame loading: content shown immediately with an empty gutter and a spinner in the title.
-* Blame error: inline red line at the top of the body, content still shown.
+* Gutter = exactly 28 cols: short oid (7) + ` ` + author fitted to 9 cols + ` ` + date
+  `%Y-%m-%d` (10). Printed on group-start lines **and on the top visible row**; other rows
+  show a dim `   ┆` padded to 28.
+* Null oid ⇒ dim `(not committed yet)` padded to 28.
+* Then ` │`, then line numbers `{:>digits} │ ` (when shown) or a single space, then the
+  text via `styled_line`.
+* Hash color = age bucket `round((newest − t) / (newest − oldest) × 5)` into
+  `theme.blame_age` (skipped in monochrome); underlined (`link`) when that commit is in
+  the current timeline (⇒ `Enter` can jump to it).
+
+## States
+* `blame == None` (loading): top visible row shows `<spinner> blame…` in the gutter, the
+  rest blank gutters; content is shown normally.
+* `Some(Err(e))`: a `blame failed: e` row (error style) at the top of the body, content
+  shifted down one row, no gutter.
+* `Some(Ok(b))` with `b.lines.len() != text.line_count()` (working-tree file changed
+  between read and blame): treated like `None` (no gutter).

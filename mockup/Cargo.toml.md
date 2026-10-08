@@ -1,9 +1,9 @@
 # `Cargo.toml`
 
 ## Purpose
-Crate manifest. Produces a single binary named **`git-timeline`** so that, once on
-`PATH`, git dispatches `git timeline …` to it (git runs any `git-<name>` executable
-found on `PATH` as the subcommand `<name>`).
+Crate manifest. One crate with a **library** (`src/lib.rs`, crate `git_timeline`, used by
+`tests/`) and a **binary** named **`git-timeline`** (`src/main.rs`). Once on `PATH`, git
+dispatches `git timeline …` to it.
 
 ## Contents
 
@@ -21,30 +21,27 @@ name = "git-timeline"
 path = "src/main.rs"
 
 [dependencies]
-ratatui           = "0.29"        # TUI widgets/layout
-crossterm         = "0.28"        # terminal backend + input events
+ratatui           = "0.30"   # TUI; its `ratatui::crossterm` re-export is the backend
 clap              = { version = "4", features = ["derive", "wrap_help"] }
-similar           = "2"           # in-process diff (Myers, with deadline)
+similar           = "2"      # in-process diff (Myers + deadline)
 syntect           = { version = "5", default-features = false, features = ["default-fancy"] }
-                                  # default-fancy = pure-Rust regex (no onig C dep)
-crossbeam-channel = "0.5"         # MPMC channels for worker pool / event loop
-lru               = "0.12"        # bounded caches
-bstr              = "1"           # byte-string paths (non-UTF-8 safe)
+                             # pure-Rust regex, no onig C dep
+crossbeam-channel = "0.5"    # worker queues (select_biased!), event channel
+lru               = "0.18"   # bounded caches
+bstr              = "1"      # byte-string paths
 chrono            = { version = "0.4", default-features = false, features = ["std", "clock"] }
-                                  # parse %aI, render relative dates
-unicode-width     = "0.2"         # correct column widths (CJK, emoji)
+unicode-width     = "0.2"
 thiserror         = "2"
-anyhow            = "1"           # only at the lib::run / main boundary
-base64            = "0.22"        # OSC 52 clipboard payload
+anyhow            = "1"      # only at the lib::run / main boundary
+base64            = "0.22"   # OSC 52 payload
 arboard           = { version = "3", optional = true, default-features = false, features = ["wayland-data-control"] }
 
 [features]
 default   = ["clipboard"]
-clipboard = ["dep:arboard"]       # without it, copy uses OSC 52 only
+clipboard = ["dep:arboard"]  # without it, copy uses OSC 52 only
 
 [dev-dependencies]
-tempfile = "3"                    # throwaway fixture repos
-insta    = "1"                    # snapshot tests of rendered frames
+tempfile = "3"               # throwaway fixture repos
 
 [profile.release]
 lto = "thin"
@@ -52,15 +49,10 @@ codegen-units = 1
 strip = true
 ```
 
-## Specs / notes
-* **Binary name is the contract.** Nothing else (no wrapper script) is needed for
-  `git timeline` to work.
-* `git timeline --help` is **intercepted by git**: it turns into `git help timeline`, which
-  looks for a man page `git-timeline(1)`. Therefore:
-  * `-h` must print clap help (works, git passes it through).
-  * v1 ships no man page; README tells users to use `-h`. (Future: generate one with
-    `clap_mangen` in a `xtask`, not in `build.rs`.)
-* Library + binary in one crate: `src/lib.rs` (crate `git_timeline`, used by `tests/`)
-  and `src/main.rs` (binary `git-timeline`).
-* No `build.rs`. Syntax definitions come from syntect's embedded dump.
-* Feature `clipboard` is on by default; packagers for headless systems can disable it.
+## Notes
+* **No direct `crossterm` dependency**: everything uses `ratatui::crossterm` so the
+  backend version always matches ratatui's.
+* **Binary name is the contract**: no wrapper script needed for `git timeline`.
+* No `build.rs`; syntax definitions come from syntect's embedded dump. No man page
+  (`--help` goes to git's man lookup; users use `-h`).
+* `.gitignore` ignores `/target`; `Cargo.lock` is committed (binary crate).

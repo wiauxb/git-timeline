@@ -2,16 +2,20 @@
 
 ## Purpose
 `?` overlay listing all key bindings, generated from `app::keymap::BINDINGS` (single
-source of truth).
+source of truth, so help can't drift from the keymap).
 
 ## Contents
 
 ```rust
-pub fn render(f: &mut Frame, area: Rect, scroll: usize);
+pub fn render(f: &mut Frame, area: Rect, s: &AppState, scroll: usize);
 ```
 
 ## Specs
-* Centered popup, 70 × min(term-4, content) cells; sections per `Context`
-  (Global, Timeline, File, Diff views, Blame view).
-* Scrollable with `j`/`k` if it doesn't fit; closed with `?`, `Esc`, `q`.
-* Footer: `git-timeline <version> · git <version>`.
+* Sections in order: Global, Timeline pane, File pane, Diff views, Blame view
+  (`Context::title()`), blank line between sections; each binding is
+  `  {keys:<26}` (`hash` style) + description.
+* Footer (dim): `git-timeline <CARGO_PKG_VERSION> · git <x.y.z>` (from `ctx.git_version`).
+* Popup: `centered(area, 82, min(lines + 2, height − 2))`, `Clear` underneath, bordered
+  with title ` Keys `, `border_focused` style.
+* Scroll offset clamped to `lines − inner height`; keys handled by keymap/update
+  (`j`/`k`, PgUp/PgDn/Space scroll; `Esc`, `q`, `?`, `Enter`, `d` close).

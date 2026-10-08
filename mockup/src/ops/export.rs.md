@@ -6,21 +6,22 @@ Save the selected version of the file to a new file, without touching the reposi
 ## Contents
 
 ```rust
-/// Default destination, relative to `ctx.invocation_dir`:
-///   <stem>@<short-oid>.<ext>   e.g.  main@3fa2c1d.rs
-///   <stem>@staged.<ext>        for the Index row
-/// (WorkingTree row: export is allowed but pointless; name uses "@worktree").
-pub fn default_name(entry: &TimelineEntry) -> String;
+/// `<stem>@<tag>.<ext>` using the file name AT THAT REVISION (`entry.path`);
+/// tag = short oid, `staged` (Index row) or `worktree` (WorkingTree row).
+/// No extension (or dot-file like `.env`) ⇒ `<name>@<tag>`.
+pub fn default_name(e: &TimelineEntry) -> String;
 
-/// Resolve user input (relative to invocation_dir, `~` expanded) and write bytes.
-/// `overwrite=false` and destination exists ⇒ OpResult::ExportExists.
+/// Exists and !overwrite ⇒ OpResult::ExportExists (→ ConfirmOverwrite dialog);
+/// directory ⇒ Failed; else atomic_write ⇒ Exported / Failed.
 pub fn write(bytes: &[u8], dest: &Path, overwrite: bool) -> OpResult;
 ```
 
 ## Specs
-* Uses the file name **at that revision** (`entry.path`), not the current name.
-* Bytes are the exact blob bytes (no line-ending conversion, no lossy UTF-8).
-* Symlink versions export the link **target text** as a regular file (documented).
-* Submodule / Absent / TooLarge versions: action disabled (status bar explains why).
-  TooLarge could be exported by streaming `cat-file` — v2.
-* Parent directory must exist; no `mkdir -p`.
+* Destination resolution happens in `update.rs`: input trimmed, `~/` expanded with `HOME`,
+  relative paths joined to `ctx.invocation_dir` (where `git timeline` was launched).
+* Bytes are the exact stored bytes (no line-ending conversion). Symlink versions export the
+  link target text as a regular file.
+* Not available (refused in `update.rs` with a status message) when the content is not
+  loaded yet, `Absent`, `Submodule` or `TooLarge`.
+* The parent directory must exist (no `mkdir -p`).
+* Existence check uses `symlink_metadata` (a dangling symlink counts as existing).

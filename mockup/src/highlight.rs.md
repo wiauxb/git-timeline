@@ -1,49 +1,53 @@
 # `src/highlight.rs`
 
 ## Purpose
-Turn a `TextContent` into per-line styled spans using **syntect**. Runs on worker
-threads; the result is cached on the main thread and reused by all views (content,
-diff, blame all show highlighted lines).
+Turn a `TextContent` into per-line styled ranges using **syntect**. Runs on worker
+threads; results are cached on the main thread (keyed by content + file name) and used
+by content, diff and blame views.
 
 ## Contents
 
 ```rust
-pub struct Highlighter {                // cheap to clone (Arc inside)
-    inner: Option<Arc<Inner>>,          // None when --no-highlight / NO_COLOR
+#[derive(Clone)]
+pub struct Highlighter {
+    inner: Option<Arc<Inner>>,          // None: --no-highlight or NO_COLOR
+    pub theme_warning: Option<String>,  // unknown theme → shown once in the status bar
 }
-struct Inner {
-    syntaxes: syntect::parsing::SyntaxSet,     // SyntaxSet::load_defaults_newlines()
-    theme: syntect::highlighting::Theme,       // from ThemeSet::load_defaults()
-}
+struct Inner { syntaxes: SyntaxSet /* load_defaults_newlines */, theme: Theme }
 
-/// Styled version of one blob; line i ↔ TextContent line i.
 pub struct HighlightedText {
     pub syntax_name: String,
-    pub lines: Vec<Vec<StyledSpan>>,
+    /// line i ↔ TextContent line i; byte ranges into `TextContent::line_str(i)`.
+    pub lines: Vec<Vec<(Range<usize>, ratatui::style::Style)>>,
 }
-pub struct StyledSpan { pub range: std::ops::Range<usize>, pub style: ratatui::style::Style }
-// `range` is a byte range inside the line (no string copy).
 
-pub enum HighlightOutcome { Highlighted(Arc<HighlightedText>), Plain /* skipped */ }
+#[derive(Clone)]
+pub enum HighlightOutcome {
+    Highlighted(Arc<HighlightedText>),
+    Plain { reason: &'static str },     // shown in the file header
+}
 
 impl Highlighter {
-    pub fn new(theme_name: String, disabled: bool) -> Self;
+    pub fn new(theme_name: &str, disabled: bool) -> Self;
+    pub fn disabled() -> Self;
     pub fn enabled(&self) -> bool;
-    /// Decide the syntax from the path *of that revision* (renames can change the
-    /// extension), falling back to the first line (shebang, modelines).
-    pub fn syntax_for(&self, path: &RepoPath, first_line: &str) -> Option<String>;
-    pub fn highlight(&self, content: &TextContent, syntax: &str) -> HighlightOutcome;
+    pub fn highlight(&self, text: &TextContent, path: &RepoPath) -> HighlightOutcome;
 }
 ```
 
 ## Specs
-* **Limits:** skip (return `Plain`) when the text is > 1 MiB or > 20 000 lines, or any line
-  is > 10 000 bytes (minified files make syntect very slow).
-* **Cache key** (in `app/cache.rs`): `(ContentKey, syntax_name)`.
-* syntect requires a full pass from line 0 (stateful parser); there is no lazy
-  per-viewport highlighting in v1. Typical files take a few ms; the content is shown
-  **plain first**, then re-drawn highlighted when the job completes (no blocking).
-* Colors: syntect RGB → `ratatui::style::Color::Rgb`. Only foreground + bold/italic/
-  underline are used; the theme background is ignored (the terminal's background is kept).
-* Unknown theme name → fall back to default and set a status-bar warning once.
-* `NO_COLOR` set (non-empty) ⇒ highlighter disabled, regardless of flags.
+* Syntax choice uses the path **of that revision**: full file name as extension
+  (`Makefile`), then extension, then first line (shebang). "Plain Text" → `Plain`.
+* Limits → `Plain { "no highlighting (too large)" }`: > 1 MiB, > 20 000 lines, or any line
+  > 10 000 bytes. Other reasons: "highlighting disabled", "plain text",
+  "highlighting failed".
+* Each line is fed with a trailing `\n` (newlines syntax set); ranges are clipped to the
+  line length.
+* Colors: syntect RGB fg → `Color::Rgb`, bold/italic/underline; theme background ignored.
+* Unknown theme → falls back to `base16-ocean.dark` and sets `theme_warning` (lists
+  available names).
+* `NO_COLOR` non-empty ⇒ disabled regardless of flags.
+* Content is shown plain first and redrawn when the highlight job completes.
+
+## Tests
+`highlights_rust`: `src/main.rs` → syntax "Rust", 3 lines, last range ends at line end.

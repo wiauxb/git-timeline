@@ -1,23 +1,25 @@
 # `src/model/mod.rs`
 
 ## Purpose
-Domain types shared by every layer. **Pure**: no IO, no git process, no ratatui
-(exception: none — styles live in `highlight.rs`/`ui/`).
+Domain types shared by every layer. **Pure**: no IO, no git process. The only external
+types used are `similar::DiffOp` (diff ops) and `chrono` dates.
 
 ## Contents
 
 ```rust
-mod path;      pub use path::RepoPath;
-mod revision;  pub use revision::*;   // Oid, RevisionId, CommitMeta, ChangeKind, FileMode,
-                                      // BlobSource, TimelineEntry, Timeline
-mod content;   pub use content::*;    // FileContent, TextContent, ContentKey
-mod diff;      pub use diff::*;       // FileDiff, Hunk, DiffLine, DiffKey
-mod blame;     pub use blame::*;      // BlameData, BlameLine, BlameCommit
-pub mod line_map;                     // LineMap, MappedLine
+mod blame;          pub use blame::*;     // BlameData, BlameLine, BlameCommit, BlameKey
+mod content;        pub use content::*;   // FileContent, TextContent, ContentKey, classify,
+                                          // is_binary, MAX_BLOB_SIZE
+pub mod diff;       pub use diff::*;      // FileDiff, Hunk, DiffLine, DiffRow, DiffKey,
+                                          // compute, source_line_of_row, row_of_source_line
+pub mod line_map;   pub use line_map::{LineAnchor, MappedLine};   // + map_line
+mod path;           pub use path::RepoPath;
+mod revision;       pub use revision::*;  // Oid, RevisionId, Signature, CommitMeta, FileMode,
+                                          // ChangeKind, BlobSource, TimelineEntry, Timeline
 ```
 
 ## Invariants shared across the module
 * **Line numbers are 0-based internally**, rendered 1-based by `ui/`.
-* All shared, potentially large data is held in `Arc` (`Arc<FileContent>`,
-  `Arc<FileDiff>`, …) so caches, state and workers can share without copying.
+* Large shared data travels as `Arc` (`Arc<FileContent>`, `Arc<FileDiff>`, `Arc<BlameData>`,
+  `Arc<CommitMeta>`), so caches, state and workers share without copying.
 * Everything here is `Send + Sync`.

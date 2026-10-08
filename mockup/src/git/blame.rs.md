@@ -1,44 +1,45 @@
 # `src/git/blame.rs`
 
 ## Purpose
-Run `git blame --porcelain` for the selected revision and parse it into `BlameData`.
+Run `git blame --porcelain` for a timeline row and parse it into `BlameData`.
 
 ## Contents
 
 ```rust
-pub fn blame(git: &Git, entry: &TimelineEntry, staged_bytes: Option<&[u8]>) -> Result<BlameData>;
-pub(crate) fn parse_porcelain(out: &[u8]) -> Result<BlameData>;
+/// `staged` = bytes of the staged blob, required for the Index row.
+pub fn blame(git: &Git, entry: &TimelineEntry, staged: Option<&[u8]>) -> Result<BlameData>;
+pub fn parse_porcelain(out: &[u8]) -> Result<BlameData>;
+fn to_time(unix: i64, tz: &str) -> DateTime<FixedOffset>;   // tz "+0200" / "-0530"
 ```
 
 ## Command per row kind
 | Row | Command |
 |---|---|
-| `Commit(oid)` | `git blame --porcelain <oid> -- <entry.path>` |
+| `Commit(oid)` | `git blame --porcelain <oid> -- <entry.path>` (path *at that commit*) |
 | `WorkingTree` | `git blame --porcelain -- <path>` (uncommitted lines get the null oid) |
-| `Index` | `git blame --porcelain --contents - -- <path>` with the **staged blob bytes on stdin** |
-| `Deleted` / Absent / Binary / Submodule | not run; view shows "nothing to blame" |
+| `Index` | `git blame --porcelain --contents - -- <path>`, staged bytes on stdin |
 
-* `entry.path` is the path **at that commit** (renames).
-* Pathspec magic is not used for blame (it takes a plain path after `--`).
-* Default git rename/copy detection inside blame is used (no `-M`/`-C` in v1).
+The app never requests blame for absent / non-text versions (no `BlameKey`, or content not
+text). Plain path after `--` (no pathspec magic). Default rename handling of git blame
+(no `-M`/`-C`).
 
 ## Porcelain parsing
 ```
 <oid> <orig_line> <final_line> [<group_count>]
-author …
-author-time <unix>
-author-tz +0200
-summary …
-[boundary]
-filename <orig path>
+author …            author-time <unix>     author-tz +0200
+summary …           [boundary]             filename <orig path>
 \t<line content>
 ```
-* Header fields appear only the first time an oid is seen ⇒ cache in `commits` map.
-* `final_line` is 1-based → stored 0-based; lines are assembled by `final_line`.
-* Content lines (after `\t`) are ignored (we already have the content).
-* `group_start` = true when the oid differs from the previous final line's oid.
+* A header line opens a record; key/value lines follow; the `\t` content line closes it.
+* Commit info is stored the first time an oid is seen; `filename` is remembered per oid.
+* Line numbers are 1-based in the output, stored 0-based; lines are sorted by final line.
+* `group_start` = first line or commit differs from the previous line's commit.
+* Content text is ignored (we already have the content).
 
 ## Specs
-* Blame can be slow (seconds on old, big files). It runs on a worker; the view shows a
-  spinner + the plain content meanwhile. Switching revision while it runs ⇒ result is
-  still cached when it arrives (cheap to switch back).
+Blame can take seconds on big old files: it runs on a worker; the view shows content with
+an empty gutter and a spinner meanwhile. Results (and errors) are cached by `BlameKey`.
+
+## Tests
+Unit: parse with repeated oid, boundary flag, groups. Integration: per-commit attribution,
+working tree / staged rows have null-oid lines.

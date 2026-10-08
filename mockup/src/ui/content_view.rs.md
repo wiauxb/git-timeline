@@ -1,32 +1,53 @@
 # `src/ui/content_view.rs`
 
 ## Purpose
-Render the full file at the selected revision (the default view).
+Render the full file at the selected revision (the default view), and provide the
+**line renderer shared by all views** (content, diff, blame).
 
 ## Contents
 
 ```rust
-pub fn render(f: &mut Frame, area: Rect, s: &AppState,
-              text: &TextContent, hl: Option<&HighlightedText>);
+pub fn render(f: &mut Frame, area: Rect, s: &AppState, text: &TextContent, hl: Option<&HighlightedText>);
 
-/// Shared with diff_view / blame_view.
-pub(super) fn styled_line<'a>(text: &'a TextContent, hl: Option<&HighlightedText>,
-                              line: usize, hscroll: usize, width: u16,
-                              tab_width: u8) -> Line<'a>;
+/// Cursor-line style: only on row == s.file.cursor and when no anchor is pending;
+/// `cursor_line` (bg) when the file pane has focus, `cursor_line_unfocused` (underline) otherwise.
+pub fn cursor_style<'a>(line: Line<'a>, s: &AppState, row: usize) -> Line<'a>;
+
+pub fn digits(n: usize) -> usize;   // decimal width of max(n, 1)
+
+pub fn styled_line(text: &TextContent, hl: Option<&HighlightedText>, line: usize,
+                   base: Style, hscroll: usize, width: usize, tab_width: u8) -> Vec<Span<'static>>;
+
+struct LineBuilder { hscroll, width, col, used, buf: String, buf_style: Style, out: Vec<Span<'static>> }
+impl LineBuilder {
+    fn push(&mut self, piece: &str, w: usize, style: Style) -> bool;  // false = line full
+    fn flush(&mut self);
+}
 ```
 
-## Specs
-* Rows = content lines (no wrap) or wrapped segments (`wrap = true`; then `cursor`/`top`
-  count *visual* rows and a `row → (line, segment)` index is computed for the viewport
-  only).
-* Gutter: right-aligned 1-based line numbers, width = digits of `line_count`, dim; hidden
-  with `#`.
-* Cursor line: full-width `cursor_line` background (only when the file pane is focused;
-  dim underline otherwise).
-* `styled_line`: expand tabs to `tab_width`, compute display widths with
-  `unicode-width`, slice by `hscroll` columns (never splitting a wide char: replace a
-  half-cut wide char by a space), apply highlight spans; control chars shown as `^X`
-  (dim).
-* Lines longer than the viewport: a dim `›` at the right edge.
-* Vertical scrollbar (ratatui `Scrollbar`) on the right border when content overflows.
-* No trailing-newline marker in this view (only in diffs).
+## Layout
+```
+  9 │ # Protect against non-zsh execution
+ 10 │ [ -n "$ZSH_VERSION" ] || {
+```
+Gutter (when `show_line_numbers`): right-aligned 1-based number, width `digits(line_count)`,
+then ` │ ` (`line_number` style). Text width = body width − gutter. Rows `top..` of the
+content, one row per line (no soft wrap).
+
+## `styled_line` rules
+* Works on `TextContent::line_str(line)` (lossy UTF-8); highlight spans are byte ranges in
+  that string, applied as `base.patch(span_style)`.
+* Tab ⇒ spaces up to the next multiple of `tab_width` (min 1).
+* Control chars ⇒ `^X` (`char ^ 0x40`), 2 cols, `dim` style.
+* Other chars: display width from `unicode-width`.
+* Horizontal scroll by **display columns**: pieces fully left of `hscroll` are skipped; a
+  piece cut by the scroll edge (wide char, tab) is replaced by spaces for its visible part.
+* Stops at the first piece that doesn't fit in `width` (a wide char never half-shows on
+  the right).
+* Consecutive pieces with the same style are merged into one span.
+* If `base` has a background (diff tint), the rest of the row is filled with spaces in
+  `base` so the tint reaches the edge.
+
+## Tests
+`tabs_scroll_and_wide_chars`: tab expansion, hscroll, half-cut wide char → space, `^A`,
+wide char not fitting.

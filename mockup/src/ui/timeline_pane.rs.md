@@ -7,29 +7,35 @@ Render the left pane: the list of revisions of the file.
 
 ```rust
 pub fn render(f: &mut Frame, area: Rect, s: &AppState);
-fn row(e: &TimelineEntry, s: &AppState, width: u16, now: DateTime<Local>) -> Line<'_>;
+fn change_span(c: &ChangeKind, conflicted: bool) -> Span<'static>;
+fn row(e: &TimelineEntry, marked: bool, selected: bool, width: usize, now: DateTime<Local>) -> Line<'static>;
 ```
 
-## Row format (fitted to width, subject truncated with `…`)
+## Title
+` Timeline ─ <ctx.target> (<count>)` + ` lines <L>` in `-L` mode + spinner while the
+history is streaming. Border style: `border_focused` when the pane has focus.
+
+## Row format
 
 ```
-<mark><hash>  <age> <author>  <change> <subject>
- ◆    abc1234  3d   Alice     R      Move app to src/
+◆5b089ca   3d Alice        R move to src/main.rs  ← app.rs      (commit row, selected)
+●Working tree                A new file                          (pseudo-entry row)
 ```
-| Column | Content |
+| Part | Content |
 |---|---|
-| mark | `◆` if marked, `●` for pseudo-entries, else space |
-| hash | 7-char short oid; pseudo-entries: `Working tree` / `Staged` spanning hash+age+author |
-| age | compact relative author date: `5m`, `3h`, `2d`, `3w`, `4mo`, `2y` |
-| author | author name, truncated to 12 cols (hidden if pane < 45 cols) |
-| change | one letter colored: `A` added, `M` modified (blank to reduce noise), `D` deleted, `R` renamed, `C` copied, `T` type change, `⑂` merge, `!` conflicted |
-| subject | commit subject; for `R`, the subject is followed by dim `← old/path` on the selected row only |
+| marker (1 col) | `◆` marked (`mark` style) · `●` pseudo-entry · space |
+| hash | 7-char short oid (`hash` style) |
+| age | ` {:>4} ` compact age of the **author** date (`ui::age`) |
+| author | `{:<12} ` (fitted to 12 cols); **only when the pane is ≥ 45 cols wide** |
+| change | 1 col: `A` added/untracked, `D` deleted, `R` renamed, `C` copied, `T` type change, `⑂` merge, `!` conflicted, blank for modified |
+| subject | rest of the width, fitted with `…`; on the **selected** row of a rename/copy, `  ← <old path>` is appended |
+
+Pseudo-entries: `Working tree` / `Staged` padded to 12 cols (+13 blank cols when the author
+column is shown), the change letter, then a dim word: `conflicted`, `untracked`,
+`new file`, `deleted` or `modified`.
 
 ## Specs
-* Title: `Timeline ─ <current path> (<count>)` and ` …` + spinner while streaming.
-* Selected row style differs when the pane has focus vs not.
-* Scrolling: `list_offset` maintained by `update.rs` (keeps 2 rows of margin).
-* One row per entry, no separator rows (keeps row index == entry index). Renames are
-  conveyed by the `R` letter and the `← old/path` suffix on the selected row.
-* Empty timeline while loading: centered `loading history…`.
-* `-L` mode: title shows `lines 40-80`.
+* Rows `list_offset .. list_offset + inner.height` (offset maintained by `update.rs`).
+* Selected row: whole line styled `selected_row` (focused) or `selected_row_unfocused`.
+* One row per entry, no separator rows (row index == entry index; mouse clicks rely on it).
+* Empty timeline: centered dim `loading history…` (while streaming) or `no revisions`.

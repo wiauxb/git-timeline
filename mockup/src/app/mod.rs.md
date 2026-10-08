@@ -1,74 +1,85 @@
 # `src/app/mod.rs`
 
 ## Purpose
-The application loop: receive events, translate them into actions, run the reducer,
-execute the resulting effects, redraw. Owns the `WorkerPool` and the input thread.
+The application loop: events → actions → reducer → effects → redraw. Owns the
+`WorkerPool`, the event channel and (once running) the input thread.
 
 ## Contents
 
 ```rust
-pub mod state; pub mod action; pub mod update; pub mod keymap; pub mod cache;
+pub mod action; pub mod cache; pub mod keymap; pub mod state; pub mod update;
+
+const TICK: Duration = Duration::from_millis(120);
 
 pub enum AppEvent {
-    Input(crossterm::event::Event),
+    Input(ratatui::crossterm::event::Event),
     Job(worker::JobResult),
-    Tick,                         // 250 ms: expire status messages, spinner animation
 }
 
 pub struct App {
-    state: state::AppState,
-    workers: worker::WorkerPool,
-    events: crossbeam_channel::Receiver<AppEvent>,
-    _input: std::thread::JoinHandle<()>,
+    state: AppState,
+    workers: WorkerPool,
+    events: Receiver<AppEvent>,
+    input_tx: Option<Sender<AppEvent>>,   // handed to the input thread in `run`
 }
 
 impl App {
     pub fn new(ctx: RepoContext, ui: UiOptions, hl: Highlighter) -> Self;
-    pub fn run(self, term: &mut Terminal) -> Result<()>;
-    fn execute(&mut self, effects: Vec<Effect>) -> ControlFlow<()>;
+    /// Returns Ok(Some(msg)) on a fatal error (printed by main), Ok(None) on normal quit.
+    pub fn run(self, term: &mut Terminal) -> Result<Option<String>>;
+    fn execute(&mut self, effects: Vec<Effect>) -> bool;   // true = quit
 }
 ```
 
-## Loop
+## `App::new`
+1. Wrap `ctx` in `Arc`, create the unbounded `AppEvent` channel, build `AppState`.
+2. Highlighter theme warning (unknown theme) → `Warn` status message.
+3. **Local state is read synchronously** (`git/status.rs`, a few ms) when
+   `ctx.show_local`: the `Working tree` / `Staged` rows are on top before the first commits
+   stream in, and index 0 is selected. Failure → `Error` status message, not fatal.
+4. Spawn the `WorkerPool` (shares the event sender).
+   **No input thread yet** — see below.
 
-```
-submit LoadLocalState, LoadTimeline
-draw
-loop {
-    ev = events.recv_timeout(250ms) → Tick on timeout
-    drain all immediately available events (coalesce: many TimelineChunks / key repeats
-      are processed before a single redraw)
-    for each ev:
-        actions = match ev {
-            Input(e) => keymap::map(&state, e) (0 or 1 action),
-            Job(r)   => [Action::JobDone(r)],
-            Tick     => [Action::Tick],
-        }
-        effects += update::update(&mut state, action)
-    if execute(effects) is Break → break
-    if state.dirty → layout = ui::draw(frame, &state); state.dirty = false;
-                     if layout != state.layout → update(Action::Layout(layout))
-}
-workers.shutdown()
-```
-
-## Input thread
-`loop { crossterm::event::read() → tx.send(AppEvent::Input) }`; it exits when the send
-fails. (Blocking `read` is fine on its own thread; no polling needed.)
+## `App::run`
+1. Spawn the input thread: `loop { crossterm::event::read() → send(AppEvent::Input) }`,
+   exits when the send fails. It is started **here, after the terminal is set up**:
+   when it was started earlier (in `new`), its blocking `read()` swallowed the
+   terminal's reply to ratatui's cursor-position query and startup failed with
+   "The cursor position could not be read within a normal duration".
+2. Submit `Job::LoadTimeline { gen: state.timeline_gen }` (High).
+3. Loop:
+   ```
+   effects = update::after_batch(&mut state)      // turn needs into jobs, re-anchor
+   execute(effects) → quit?            → break
+   state.fatal.is_some()               → break
+   if state.dirty:
+       dirty = false; layout = ui::draw(frame, &state)
+       if layout != state.layout → update(Action::Layout(layout)); continue (redraw)
+   recv_timeout(TICK):
+       timeout      → update(Action::Tick); continue
+       disconnected → break
+       event        → pending.push(ev)
+   pending += try_iter().take(512)               // coalesce bursts (key repeat, chunks)
+   for ev in pending: Input → keymap::map (0/1 action), Job → Action::JobDone
+                      update(action); execute(effects); stop on quit
+   ```
+   Because `after_batch` runs once per drained batch, a held `j` produces job requests only
+   for the selection reached at the end of the batch (debounce).
+4. `workers.shutdown()`, return `state.fatal.take()`.
 
 ## Effect execution (`execute`)
-| Effect | Done by |
-|---|---|
-| `Submit(job, prio)` | `workers.submit` |
-| `CancelTimeline` | `workers.cancel_timeline` |
-| `Copy(text)` | `ops::clipboard::copy` → result fed back as `Action::OpDone` |
-| `Export{bytes, dest, overwrite}` | `ops::export::write` (synchronous, small) → `Action::OpDone` |
-| `Restore{...}` | `ops::restore::restore` → `Action::OpDone`, then reload local state |
-| `Quit` | break |
+| Effect | Done by | Follow-up |
+|---|---|---|
+| `Quit` | return `true` immediately | – |
+| `Submit(job, prio)` | `workers.submit` | – |
+| `Copy(text)` | `ops::clipboard::copy` | `OpResult::Copied{text, method}` / `Failed{op:"copy"}` |
+| `Export{bytes, dest, overwrite}` | `ops::export::write` (sync) | its `OpResult` |
+| `Restore{bytes, mode, target}` | `ops::restore::restore` (sync) | its `OpResult` |
 
-Effects that produce follow-up actions call `update` again immediately (bounded depth).
+Each `OpResult` is fed back as `Action::OpDone` through `update`; resulting effects are
+executed in turn, up to a depth of 8.
 
-## Notes
-* The first draw happens before any data arrives (empty list with "loading…").
-* If `TimelineDone(Err)` arrives with 0 entries and no pseudo-entries, the loop quits
-  and `run` returns that error (fatal, printed by `main`).
+## Fatal path
+`update` sets `state.fatal` (timeline failed or empty with no rows at all); the loop breaks,
+`run` returns `Ok(Some(msg))`, `lib::run` restores the terminal and returns it as an error,
+`main` prints `git-timeline: <msg>` and exits 1.

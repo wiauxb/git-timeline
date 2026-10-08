@@ -2,55 +2,67 @@
 
 ## Purpose
 Startup discovery: find the repository, normalize the user's path into a `RepoPath`,
-validate options against git, and produce an immutable `RepoContext` shared (via `Arc`)
-by the whole app.
+validate options against git, and produce the immutable `RepoContext` shared (`Arc`) by
+the whole app. Every failure here happens **before** the TUI starts.
 
 ## Contents
 
 ```rust
+pub const MIN_GIT: (u32, u32, u32) = (2, 36, 0);
+
+#[derive(Clone, Debug)]
 pub struct RepoContext {
-    pub git: Git,
+    pub git: Git,                    // runs with -C <toplevel>
     pub toplevel: PathBuf,           // canonical
-    pub invocation_dir: PathBuf,     // cwd at launch (default export directory)
+    pub invocation_dir: PathBuf,     // cwd at launch (export base directory)
     pub target: RepoPath,            // the file, at the tip of the explored history
     pub query: LogQuery,             // see git/log.rs
-    pub show_local: bool,            // pseudo-entries enabled (no revision range given)
+    pub show_local: bool,            // pseudo-entries enabled (= no revision range)
     pub git_version: (u32, u32, u32),
-    pub object_format: ObjectFormat, // Sha1 | Sha256 (rev-parse --show-object-format)
 }
 
 impl RepoContext {
     pub fn discover(cli: &Cli, cwd: PathBuf) -> Result<Self>;
+    /// `base` supplies env settings (tests); its directory is ignored.
+    pub fn discover_with(cli: &Cli, cwd: PathBuf, base: Git) -> Result<Self>;
 }
 
-pub const MIN_GIT: (u32, u32, u32) = (2, 36, 0);
+fn git_version(git: &Git) -> Result<(u32, u32, u32)>;
+fn normalize(p: &Path) -> PathBuf;                     // lexical `.` / `..`
+fn canonicalize_existing_prefix(p: &Path) -> PathBuf;
+fn to_repo_path(rel: &Path) -> RepoPath;               // components joined with '/'
 ```
 
 ## Discovery algorithm
-1. `git --version` → parse `git version X.Y.Z[...]`; spawn NotFound ⇒ `GitNotFound`;
-   `< MIN_GIT` ⇒ `GitTooOld`.
-2. `git rev-parse --show-toplevel --show-object-format` **run in `cwd`** (not `-C`)
-   ⇒ toplevel. Failure ⇒ `NotARepository`. Bare repositories are rejected the same way.
-3. Path normalization (file may not exist anymore — it may be deleted):
-   * `abs = cwd.join(cli.path)`, then lexical normalization of `.` / `..`.
-   * Canonicalize the **deepest existing ancestor** of `abs` and re-append the remainder
-     (handles symlinked directories such as `/home → /var/home`).
-   * Strip the canonical toplevel prefix ⇒ `OutsideRepository` if it does not match.
-   * If `abs` exists and is a directory ⇒ `IsADirectory`.
-4. Revision range check (if given):
-   * contains `..` ⇒ `git rev-list --max-count=1 <range> --` must succeed
-   * otherwise ⇒ `git rev-parse --verify -q <rev>^{commit}`
-   * failure ⇒ `BadRevision`.
-5. `-L` check: run the real `git log -L…` with `--max-count=1` (cheap) and map failure to
-   `Error::Git` (e.g. "file has only 12 lines").
-6. Existence check: the path must either exist in the working tree / index **or** have at
-   least one commit: `git log --max-count=1 --format=%H [range] -- :(literal)<path>`
-   (note: without `--follow`, cheap). Empty ⇒ `NoHistory`.
-7. Unborn `HEAD` (fresh repo, no commit): allowed; the timeline will contain only
-   pseudo-entries.
+1. `git --version` (in cwd) → parse `git version X.Y.Z…`; spawn NotFound ⇒ `GitNotFound`;
+   `< MIN_GIT` ⇒ `GitTooOld` (2.36 is needed for `cat-file --batch-command`).
+2. `git rev-parse --show-toplevel` in cwd; failure/empty ⇒ `NotARepository` (bare repos too).
+   The result is canonicalized.
+3. Path:
+   * `abs = normalize(cwd / cli.path)`; existing directory ⇒ `IsADirectory`.
+   * `canonicalize_existing_prefix`: canonicalize the deepest existing ancestor and
+     re-append the rest (the file may be deleted; symlinked directories resolve). The last
+     component is never resolved if it is itself a symlink.
+   * Strip the toplevel prefix ⇒ `OutsideRepository` on mismatch; empty remainder (the
+     toplevel itself) ⇒ `IsADirectory`.
+4. Revision range (if given): contains `..` ⇒ `git rev-list --max-count=1 <range> --` must
+   succeed; else `git rev-parse --verify -q <rev>^{commit}`. Failure ⇒ `BadRevision`.
+5. `query = LogQuery { path: target, follow: !no_follow, line_range, filters }`,
+   `show_local = range.is_none()`.
+6. History check, only if HEAD is born (`rev-parse --verify -q HEAD`) or a range is given:
+   * `-L`: the real `git log -L…` args with `--max-count=1` (git validates the range; e.g.
+     "file has only 4 lines" ⇒ `Error::Git`).
+   * else the cheap `git log --max-count=1 --format=%H [range] -- :(literal)<path>` (no
+     `--follow`, which is slow to start on big repos).
+7. Local existence (only if `show_local`): path exists on disk (`symlink_metadata`) or
+   `git ls-files -z -- :(literal)<path>` is non-empty.
+8. No history and no local existence ⇒ `NoHistory`. Unborn HEAD with a staged/untracked
+   file is allowed (timeline = pseudo-entries only).
 
 ## Notes
-* All subsequent commands use `git -C <toplevel>` with repo-relative paths, so the
-  rest of the code never deals with cwd.
-* `RepoContext` is immutable after discovery; reload (`r`) rebuilds the timeline, not the
-  context.
+* git runs external subcommands in the caller's cwd without setting `GIT_PREFIX`
+  (verified), so the path argument is resolved against `cwd`.
+* After discovery all commands use `-C <toplevel>` with repo-relative paths.
+
+## Tests (tests/timeline.rs)
+Subdir invocation (`../top.txt`), glob characters in names, every error variant.
