@@ -29,11 +29,21 @@ struct Harness {
     size: (u16, u16),
 }
 
+/// File-pane toggles a test starts with. No `Default` on purpose: every test spells both
+/// out, so a change of the product defaults can never silently change what it exercises
+/// (only `app_state_defaults` looks at the defaults).
+struct View {
+    wrap: bool,
+    numbers: bool,
+}
+
 impl Harness {
-    fn new(f: &Fixture, args: &[&str]) -> Self {
+    fn new(f: &Fixture, args: &[&str], view: View) -> Self {
         let ctx = Arc::new(f.context("", args).unwrap());
         let opts = UiOptions { initial_view: InitialView::Content, tab_width: 4 };
         let mut s = AppState::new(ctx.clone(), opts, false);
+        s.file.wrap = view.wrap;
+        s.file.show_line_numbers = view.numbers;
         s.layout = LayoutInfo {
             timeline: Rect::new(0, 0, 40, 30),
             file: Rect::new(40, 0, 80, 30),
@@ -113,6 +123,25 @@ fn numbered(range: std::ops::Range<usize>) -> String {
     range.map(|i| format!("line {i}\n")).collect()
 }
 
+/// The only test that looks at what `AppState::new` picks on its own; every other test
+/// states its options through `View`.
+#[test]
+fn app_state_defaults() {
+    let f = Fixture::new();
+    f.edit("a.txt", "x\n", "init");
+    let ctx = Arc::new(f.context("", &["a.txt"]).unwrap());
+    let opts = UiOptions { initial_view: InitialView::Diff, tab_width: 4 };
+    let s = AppState::new(ctx, opts, false);
+    assert!(s.file.wrap, "soft wrap is on by default");
+    assert!(s.file.show_line_numbers, "line numbers are on by default");
+    assert_eq!((s.file.hscroll, s.file.top_skip, s.file.cursor, s.file.top), (0, 0, 0, 0));
+    assert_eq!(s.focus, Focus::Timeline);
+    assert!(!s.zoomed);
+    assert_eq!(s.view, ViewMode::DiffPrev, "view comes from initial_view");
+    assert!(s.overlay.is_none());
+    assert!(s.search.file.is_none() && s.search.timeline.is_none());
+}
+
 #[test]
 fn anchor_follows_code() {
     let f = Fixture::new();
@@ -120,7 +149,7 @@ fn anchor_follows_code() {
     let top: String = (0..10).map(|i| format!("new {i}\n")).collect();
     f.edit("a.txt", &(top + &numbered(0..50)), "prepend 10 lines");
 
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: false, numbers: true });
     assert_eq!(h.s.selected_idx, 0);
     h.act(Action::FocusFile);
     h.act(Action::CursorDown(45)); // "line 35" at HEAD
@@ -134,7 +163,7 @@ fn anchor_follows_code() {
 #[test]
 fn anchor_same_blob_keeps_position() {
     let (f, _) = renamed_history();
-    let mut h = Harness::new(&f, &["dir/b.txt"]);
+    let mut h = Harness::new(&f, &["dir/b.txt"], View { wrap: false, numbers: true });
     h.act(Action::SelectNext); // rename commit (R100: same blob as the one below)
     h.act(Action::CursorDown(2));
     let before = (h.s.file.cursor, h.s.file.top);
@@ -145,7 +174,7 @@ fn anchor_same_blob_keeps_position() {
 #[test]
 fn diff_prev_matches_git_numstat() {
     let (f, oids) = renamed_history();
-    let mut h = Harness::new(&f, &["dir/b.txt"]);
+    let mut h = Harness::new(&f, &["dir/b.txt"], View { wrap: false, numbers: true });
     h.act(Action::SetView(ViewMode::DiffPrev));
     for (i, oid) in oids.iter().rev().enumerate() {
         h.act(Action::SelectIndex(i));
@@ -160,7 +189,7 @@ fn diff_prev_matches_git_numstat() {
 #[test]
 fn diff_marked_is_ordered_old_to_new() {
     let (f, _) = linear_history();
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: false, numbers: true });
     h.act(Action::ToggleMark); // mark newest
     h.act(Action::SelectLast); // select oldest
     h.act(Action::SetView(ViewMode::DiffMarked));
@@ -171,7 +200,7 @@ fn diff_marked_is_ordered_old_to_new() {
 #[test]
 fn blame_attributes_lines() {
     let (f, oids) = linear_history();
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: false, numbers: true });
     h.act(Action::SetView(ViewMode::Blame));
     let blame = h.s.blame().expect("blame loaded").unwrap();
     assert_eq!(blame.lines.len(), 5);
@@ -190,7 +219,7 @@ fn blame_working_tree_and_index() {
     let (f, _) = linear_history();
     f.write("a.txt", "1\n2\nstaged\n").stage("a.txt");
     f.write("a.txt", "1\n2\nstaged\nworktree\n");
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: false, numbers: true });
     h.act(Action::SetView(ViewMode::Blame));
     let b = h.s.blame().unwrap().unwrap();
     assert!(b.lines[3].commit.is_null());
@@ -204,7 +233,7 @@ fn blame_working_tree_and_index() {
 #[test]
 fn restore_flow() {
     let (f, _) = renamed_history();
-    let mut h = Harness::new(&f, &["dir/b.txt"]);
+    let mut h = Harness::new(&f, &["dir/b.txt"], View { wrap: false, numbers: true });
     h.act(Action::SelectLast); // oldest, still named a.txt
     h.act(Action::StartRestore);
     assert!(matches!(h.s.overlay, Some(Overlay::ConfirmRestore { overwrites_local_changes: false, .. })));
@@ -225,7 +254,7 @@ fn restore_flow() {
 fn restore_refused_for_working_tree_and_deleted() {
     let (f, _) = linear_history();
     f.write("a.txt", "local\n");
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: false, numbers: true });
     h.act(Action::StartRestore);
     assert!(h.s.overlay.is_none());
 
@@ -233,7 +262,7 @@ fn restore_refused_for_working_tree_and_deleted() {
     g.edit("x.txt", "x\n", "add");
     g.rm("x.txt");
     g.commit("delete");
-    let mut h = Harness::new(&g, &["x.txt"]);
+    let mut h = Harness::new(&g, &["x.txt"], View { wrap: false, numbers: true });
     h.act(Action::StartRestore);
     assert!(h.s.overlay.is_none());
 }
@@ -254,7 +283,7 @@ fn restore_sets_exec_bit() {
 #[test]
 fn export_flow_and_default_name() {
     let (f, oids) = renamed_history();
-    let mut h = Harness::new(&f, &["dir/b.txt"]);
+    let mut h = Harness::new(&f, &["dir/b.txt"], View { wrap: false, numbers: true });
     h.act(Action::SelectLast);
     h.act(Action::StartExport);
     let Some(Overlay::ExportPrompt { input, .. }) = &h.s.overlay else { panic!("no prompt") };
@@ -267,7 +296,7 @@ fn export_flow_and_default_name() {
 #[test]
 fn content_reader_matches_git_show() {
     let (f, oids) = renamed_history();
-    let mut h = Harness::new(&f, &["dir/b.txt"]);
+    let mut h = Harness::new(&f, &["dir/b.txt"], View { wrap: false, numbers: true });
     let mut reader = BlobReader::new(h.ctx.git.clone());
     for (i, e) in h.s.timeline.entries.clone().iter().enumerate() {
         let (_, c) = reader.read(&e.blob, e.mode).unwrap();
@@ -305,7 +334,7 @@ fn binary_symlink_too_large() {
 fn renders_every_view() {
     let (f, _) = renamed_history();
     f.write("dir/b.txt", "zero\none\ntwo\nthree\nfour\nfive\n");
-    let mut h = Harness::new(&f, &["dir/b.txt"]);
+    let mut h = Harness::new(&f, &["dir/b.txt"], View { wrap: false, numbers: true });
     let screen = h.render();
     assert!(screen.contains("Working tree"), "{screen}");
     assert!(screen.contains("move a to b"), "{screen}");
@@ -338,7 +367,7 @@ fn renders_every_view() {
 #[test]
 fn stale_results_are_cached_but_harmless() {
     let (f, _) = linear_history();
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: false, numbers: true });
     let far = h.s.timeline.entries[4].clone();
     h.act(Action::FocusFile);
     h.act(Action::CursorDown(3));
@@ -382,7 +411,7 @@ fn three_commits() -> (Fixture, Vec<String>) {
 #[test]
 fn search_timeline_hash_and_subject() {
     let (f, oids) = three_commits();
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: false, numbers: true });
     assert_eq!(h.s.selected_idx, 0);
 
     h.act(Action::StartSearch);
@@ -419,7 +448,7 @@ fn search_file_all_views() {
     f.edit("a.txt", &numbered(0..30), "base");
     let changed = numbered(0..30).replace("line 20\n", "line 20 needle\n");
     f.edit("a.txt", &changed, "add needle");
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: false, numbers: true });
     h.act(Action::FocusFile);
 
     h.act(Action::StartSearch);
@@ -474,9 +503,8 @@ fn search_horizontal_reveal() {
     let f = Fixture::new();
     let long = format!("{}needle\nshort\n", "x".repeat(200));
     f.edit("a.txt", &long, "long line");
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: false, numbers: true });
     h.act(Action::FocusFile);
-    h.act(Action::ToggleWrap); // off: horizontal reveal only exists without wrap
     h.act(Action::StartSearch);
     h.type_str("needle");
     h.act(Action::Confirm);
@@ -487,7 +515,7 @@ fn search_horizontal_reveal() {
 #[test]
 fn search_invalid_regex_and_no_match() {
     let (f, _) = three_commits();
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: false, numbers: true });
     h.act(Action::StartSearch);
     h.type_str("(");
     let Some(Overlay::Search(p)) = &h.s.overlay else { panic!("prompt expected") };
@@ -509,7 +537,7 @@ fn search_invalid_regex_and_no_match() {
 #[test]
 fn search_renders_highlights() {
     let (f, _) = three_commits();
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: false, numbers: true });
     h.act(Action::StartSearch);
     h.type_str("bet");
     let screen = h.render();
@@ -544,7 +572,7 @@ fn hunk_keys_moved() {
     use git_timeline::app::keymap::map;
     use ratatui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     let (f, _) = three_commits();
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: false, numbers: true });
     h.act(Action::FocusFile);
     h.act(Action::SetView(ViewMode::DiffPrev));
     let key = |c| Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
@@ -576,12 +604,10 @@ fn wrap_renders_continuations() {
     let f = Fixture::new();
     f.edit("a.txt", "short\n", "base");
     f.edit("a.txt", &format!("{}\nshort\n", long_line('w')), "add a long line");
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: false, numbers: true });
     h.resize(120, 30);
     h.act(Action::FocusFile);
-    assert!(h.s.file.wrap, "wrap is on by default");
 
-    h.act(Action::ToggleWrap);
     let screen = h.render();
     assert!(!screen.contains('↪'));
     assert_eq!(rows_between(&screen, "1 │ w00", "2 │ short"), 1, "wrap off: one row, clipped");
@@ -615,7 +641,7 @@ fn wrap_viewport_math() {
     let f = Fixture::new();
     let text: String = (0..30).map(|i| long_line(char::from(b'a' + (i % 26) as u8)) + "\n").collect();
     f.edit("a.txt", &text, "long lines");
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: true, numbers: true });
     h.resize(120, 30);
     h.act(Action::FocusFile);
     let body = h.s.file_rows();
@@ -656,7 +682,7 @@ fn wrap_anchor_keeps_screen_offset() {
         *l = format!("short {i}");
     }
     f.edit("a.txt", &(head.join("\n") + "\n"), "shorten 8..15");
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: true, numbers: true });
     h.resize(120, 30);
     h.act(Action::FocusFile);
 
@@ -681,12 +707,11 @@ fn search_steps_through_one_line() {
     let filler = "abcd ".repeat(40);
     let line = format!("{filler}needle {filler}needle {filler}needle");
     f.edit("a.txt", &format!("{line}\nnext\n"), "one long line");
-    let mut h = Harness::new(&f, &["a.txt"]);
+    let mut h = Harness::new(&f, &["a.txt"], View { wrap: false, numbers: true });
     h.resize(120, 30);
     h.act(Action::FocusFile);
 
     // wrap off: each n scrolls horizontally to the next match on the same line
-    h.act(Action::ToggleWrap);
     h.act(Action::StartSearch);
     h.type_str("needle");
     h.act(Action::Confirm);
