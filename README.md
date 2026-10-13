@@ -83,7 +83,7 @@ the newest commit. They are hidden when a revision range is given.
 | `g` / `G`, `Ctrl-D` / `Ctrl-U`, PgUp/PgDn | jump / page |
 | `h` / `l` (file pane) | horizontal scroll |
 | `#` | toggle line numbers |
-| `w` | toggle soft wrap (word boundaries, `↪` on continuation rows) |
+| `w` | toggle soft wrap (on by default; word boundaries, `↪` on continuation rows) |
 | `z` | zoom the file pane |
 | `d` | commit details (full message, changed files) |
 | `y` | copy the full commit hash (system clipboard, or OSC 52 over SSH) |

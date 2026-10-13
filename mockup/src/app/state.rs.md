@@ -20,7 +20,7 @@ pub struct FileViewState {
                                    // (only set by viewport::reveal; 0 otherwise)
     pub hscroll: usize,            // columns
     pub show_line_numbers: bool,   // initial: true
-    pub wrap: bool,                // soft wrap at word boundaries; initial: false
+    pub wrap: bool,                // soft wrap at word boundaries; initial: true
     pub pending_anchor: Option<LineAnchor>,
 }
 

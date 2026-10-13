@@ -34,7 +34,7 @@ revision, plus a few alternative views.
 | Staleness | No per-job tickets: every result is cached, and `update::after_batch` re-derives what the current view still needs once per batch of events (gives debouncing of held keys for free). Only the timeline stream has a generation counter (reload) |
 | Cross-thread errors | Carried as `String` in `JobResult` |
 | Startup | Local state (`git status`) read **synchronously** before the TUI so the `Working tree` row is on top and selected before commits stream in |
-| Soft wrap | `w` toggles it (off by default), file pane only, all views. Word boundaries, `↪` on continuation rows, no horizontal scroll while on. Cursor and anchoring stay on **logical** lines; screen-row math lives in `app/viewport.rs` |
+| Soft wrap | `w` toggles it (on by default), file pane only, all views. Word boundaries, `↪` on continuation rows, no horizontal scroll while on. Cursor and anchoring stay on **logical** lines; screen-row math lives in `app/viewport.rs` |
 | Search | `/` searches the **focused pane**: the timeline (hash prefix + subject) or the file view (displayed lines, every view). Regex, smart case, incremental. It jumps and highlights, never filters. `n`/`N` next/previous match, wrapping: by row in the timeline, **by match** in the file (several matches on one line are visited in turn, scrolling inside a tall wrapped line). One search per pane, kept across revision changes |
 | Minimum git | **2.36** (`cat-file --batch-command`), checked at startup |
 
@@ -166,7 +166,7 @@ Rules:
 | `}` / `{` | next / previous hunk (diff views) |
 | `Enter` (blame view) | jump to the revision that last touched the line |
 | `#` | toggle line numbers |
-| `w` | toggle soft wrap (file pane) |
+| `w` | toggle soft wrap (file pane, on by default) |
 | `z` | zoom the file pane |
 | `d` | commit details popup |
 | `y` | copy full hash |

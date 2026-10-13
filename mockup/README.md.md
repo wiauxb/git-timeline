@@ -23,7 +23,7 @@ End-user documentation. Developer docs live in doc comments and in `mockup/`.
 6. **Keys** — full table + mouse (wheel, click). Includes a short **Search** paragraph:
    `/` searches the focused pane (timeline: hash prefix + subject; file: displayed lines),
    regex with smart case, live; `n`/`N` next/previous (wraps), `Esc` clears; hunks are
-   `}`/`{`. `w` toggles soft wrap (word boundaries, `↪` on continuation rows).
+   `}`/`{`. `w` toggles soft wrap (on by default; word boundaries, `↪` on continuation rows).
 7. **Restore** — only rewrites the working-tree file at its current path (exec bit
    included); never index / HEAD / refs.
 8. **Environment** — `NO_COLOR`, `GIT_TIMELINE_THEME`.

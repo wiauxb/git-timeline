@@ -270,7 +270,7 @@ impl AppState {
             focus: Focus::Timeline,
             zoomed: false,
             view,
-            file: FileViewState { show_line_numbers: true, ..Default::default() },
+            file: FileViewState { show_line_numbers: true, wrap: true, ..Default::default() },
             search: SearchState::default(),
             in_flight: HashSet::new(),
             cache: Caches::default(),

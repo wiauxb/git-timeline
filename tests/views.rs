@@ -476,6 +476,7 @@ fn search_horizontal_reveal() {
     f.edit("a.txt", &long, "long line");
     let mut h = Harness::new(&f, &["a.txt"]);
     h.act(Action::FocusFile);
+    h.act(Action::ToggleWrap); // off: horizontal reveal only exists without wrap
     h.act(Action::StartSearch);
     h.type_str("needle");
     h.act(Action::Confirm);
@@ -578,7 +579,9 @@ fn wrap_renders_continuations() {
     let mut h = Harness::new(&f, &["a.txt"]);
     h.resize(120, 30);
     h.act(Action::FocusFile);
+    assert!(h.s.file.wrap, "wrap is on by default");
 
+    h.act(Action::ToggleWrap);
     let screen = h.render();
     assert!(!screen.contains('↪'));
     assert_eq!(rows_between(&screen, "1 │ w00", "2 │ short"), 1, "wrap off: one row, clipped");
@@ -615,7 +618,6 @@ fn wrap_viewport_math() {
     let mut h = Harness::new(&f, &["a.txt"]);
     h.resize(120, 30);
     h.act(Action::FocusFile);
-    h.act(Action::ToggleWrap);
     let body = h.s.file_rows();
     let d = h.s.displayed();
     assert_eq!(viewport::row_height(&h.s, &d, 0), 3);
@@ -657,7 +659,6 @@ fn wrap_anchor_keeps_screen_offset() {
     let mut h = Harness::new(&f, &["a.txt"]);
     h.resize(120, 30);
     h.act(Action::FocusFile);
-    h.act(Action::ToggleWrap);
 
     // HEAD: cursor on L15 with three short lines (3 screen rows) above it
     h.s.file.cursor = 15;
@@ -685,6 +686,7 @@ fn search_steps_through_one_line() {
     h.act(Action::FocusFile);
 
     // wrap off: each n scrolls horizontally to the next match on the same line
+    h.act(Action::ToggleWrap);
     h.act(Action::StartSearch);
     h.type_str("needle");
     h.act(Action::Confirm);
